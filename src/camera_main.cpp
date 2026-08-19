@@ -48,11 +48,11 @@ int main() {
             
             // Fallback to buffer timestamp if SensorTimestamp metadata isn't explicitly exposed on this ISP
             uint64_t ts_l = meta_l.contains(libcamera::controls::SensorTimestamp.id()) ? 
-                            meta_l.get(libcamera::controls::SensorTimestamp) : 
+                            meta_l.get(libcamera::controls::SensorTimestamp).value() : 
                             stereo_pair->left_request->buffers().begin()->second->metadata().timestamp;
                             
             uint64_t ts_r = meta_r.contains(libcamera::controls::SensorTimestamp.id()) ? 
-                            meta_r.get(libcamera::controls::SensorTimestamp) : 
+                            meta_r.get(libcamera::controls::SensorTimestamp).value() : 
                             stereo_pair->right_request->buffers().begin()->second->metadata().timestamp;
                             
             double delta_ms = std::abs(static_cast<double>(ts_l) - static_cast<double>(ts_r)) / 1000000.0;
