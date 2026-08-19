@@ -287,7 +287,7 @@ void broadcast_thread_loop() {
         };
 
         float distance = current_hazard.distance_m;
-        if (distance == std::numeric_limits<float>::infinity()) {
+        if (std::isinf(distance)) {
             distance = 99.0f; // Default far distance for JSON parsing ease
         }
 
@@ -310,6 +310,9 @@ void broadcast_thread_loop() {
         {
             std::lock_guard<std::mutex> lock(g_connections_mutex);
             std::vector<std::shared_ptr<session>> active_connections(g_connections.begin(), g_connections.end());
+            
+            std::cout << "[Broadcast] Pushing telemetry to " << active_connections.size() << " clients...\n";
+            
             for (auto& session_ptr : active_connections) {
                 session_ptr->send_message(payload);
             }
