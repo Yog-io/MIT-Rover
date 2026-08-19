@@ -75,3 +75,29 @@ target_link_libraries(lidar_test
     PRIVATE
         Threads::Threads
 )
+
+# ---------------------------------------------------------
+# Diagnostic Suite
+# ---------------------------------------------------------
+
+add_executable(test_websocket src/tests/test_websocket.cpp)
+target_include_directories(test_websocket PRIVATE src)
+target_link_libraries(test_websocket PRIVATE Boost::system Boost::thread nlohmann_json::nlohmann_json Threads::Threads)
+
+add_executable(test_camera_sync src/tests/test_camera_sync.cpp src/camera/DualCameraCapture.cpp)
+target_include_directories(test_camera_sync PRIVATE src ${LIBCAMERA_INCLUDE_DIRS})
+target_link_directories(test_camera_sync PRIVATE ${LIBCAMERA_LIBRARY_DIRS})
+target_link_libraries(test_camera_sync PRIVATE ${OpenCV_LIBS} ${LIBCAMERA_LIBRARIES} OpenMP::OpenMP_CXX Threads::Threads)
+
+add_executable(test_stereo_vision src/tests/test_stereo_vision.cpp src/camera/DualCameraCapture.cpp)
+target_include_directories(test_stereo_vision PRIVATE src ${LIBCAMERA_INCLUDE_DIRS})
+target_link_directories(test_stereo_vision PRIVATE ${LIBCAMERA_LIBRARY_DIRS})
+target_link_libraries(test_stereo_vision PRIVATE ${OpenCV_LIBS} ${LIBCAMERA_LIBRARIES} OpenMP::OpenMP_CXX Threads::Threads)
+
+add_executable(test_mpu6050 src/tests/test_mpu6050.cpp src/imu/MPU6050Sensor.cpp)
+target_include_directories(test_mpu6050 PRIVATE src)
+target_link_libraries(test_mpu6050 PRIVATE Threads::Threads)
+
+add_executable(test_tfluna_i2c src/tests/test_tfluna_i2c.cpp src/lidar/TFLunaSensor.cpp)
+target_include_directories(test_tfluna_i2c PRIVATE src)
+target_link_libraries(test_tfluna_i2c PRIVATE Threads::Threads)

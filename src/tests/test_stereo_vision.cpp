@@ -1,0 +1,67 @@
+#include "camera/DualCameraCapture.hpp"
+#include <opencv2/opencv.hpp>
+#include <iostream>
+#include <chrono>
+#include <omp.h>
+
+int main() {
+    std::cout << "[Diagnostic] Starting Phase 3 Stereo Vision Test..." << std::endl;
+    DualCameraCapture dual_cam;
+    
+    if (!dual_cam.initialize()) {
+        std::cerr << "Failed to initialize cameras." << std::endl;
+        return -1;
+    }
+    
+    dual_cam.start();
+    
+    // Allow cameras to warm up and auto-expose
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    
+    auto stereo = cv::StereoBM::create(64, 9);
+    
+    auto pair = dual_cam.get_stereo_pair();
+    if (!pair || pair->left_y.empty() || pair->right_y.empty()) { 
+        std::cerr << "Failed to get synchronized frame pair." << std::endl; 
+        dual_cam.stop();
+        return -1; 
+    }
+    
+    cv::Mat disparity_16s;
+    
+    auto start_time = std::chrono::steady_clock::now();
+    
+    // 1. StereoBM
+    stereo->compute(pair->left_y, pair->right_y, disparity_16s);
+    
+    // 2. OpenMP Binning (Mocked HazardMapper workload)
+    int width = disparity_16s.cols;
+    int height = disparity_16s.rows;
+    int binned_points = 0;
+    
+    #pragma omp parallel for reduction(+:binned_points)
+    for (int v = 0; v < height; ++v) {
+        const int16_t* row_ptr = disparity_16s.ptr<int16_t>(v);
+        for (int u = 0; u < width; ++u) {
+            int16_t d_val = row_ptr[u];
+            if (d_val > 0) {
+                binned_points++;
+            }
+        }
+    }
+    
+    auto end_time = std::chrono::steady_clock::now();
+    auto exec_time = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+    
+    std::cout << "[Diagnostic] Execution time (StereoBM + OMP Binning): " << exec_time << " ms (Target: < 30ms)" << std::endl;
+    std::cout << "[Diagnostic] Binned points: " << binned_points << std::endl;
+    
+    // Save disparity map
+    cv::Mat disp_8u;
+    disparity_16s.convertTo(disp_8u, CV_8U, 255.0 / (64 * 16.0));
+    cv::imwrite("disparity_test.png", disp_8u);
+    std::cout << "[Diagnostic] Saved disparity map to disparity_test.png" << std::endl;
+    
+    dual_cam.stop();
+    return 0;
+}
