@@ -32,6 +32,7 @@ bool TFLunaSensor::initialize(const std::string& port) {
     }
 
     struct termios tty;
+    // 1. Zero the Memory to prevent leftover garbage
     std::memset(&tty, 0, sizeof(tty));
     if (tcgetattr(serial_fd_, &tty) != 0) {
         std::cerr << "[TFLuna] Failed to get termios attributes." << std::endl;
@@ -98,9 +99,18 @@ float TFLunaSensor::get_distance_meters() const {
 static bool read_one_byte(int fd, uint8_t& out) {
     uint8_t buf;
     ssize_t n = read(fd, &buf, 1);
-    if (n == 1) {
+    
+    // 2. Print EVERY Byte immediately
+    if (n > 0) {
+        std::printf("%02X ", buf);
+        std::fflush(stdout);
         out = buf;
         return true;
+    } 
+    // 3. Error Logging
+    else if (n < 0) {
+        std::printf("\n[Read Error] %s\n", strerror(errno));
+        std::fflush(stdout);
     }
     return false;
 }
@@ -110,28 +120,14 @@ void TFLunaSensor::polling_loop() {
 
     while (running_) {
 #ifdef __linux__
-        // ---- RAW DUMP: Read 1 byte and print immediately ----
+        // ---- State 0: Wait for first 0x59 ----
         uint8_t byte0 = 0;
-        {
-            ssize_t n = read(serial_fd_, &byte0, 1);
-            if (n > 0) {
-                printf("RX: %02X\n", byte0);
-            } else if (n == 0) {
-                printf("RX: EOF/0 bytes\n");
-            } else {
-                printf("RX: Error %d\n", errno);
-            }
-            fflush(stdout);
-
-            if (n != 1) {
-                consecutive_failures++;
-                continue;
-            }
-        }
-
-        // ---- State 0: Continue only if this byte is 0x59 ----
-        if (byte0 != 0x59) {
+        if (!read_one_byte(serial_fd_, byte0)) {
+            consecutive_failures++;
             continue;
+        }
+        if (byte0 != 0x59) {
+            continue; // Not a header byte, keep scanning
         }
 
         // ---- State 1: Wait for second 0x59 ----
@@ -157,17 +153,15 @@ void TFLunaSensor::polling_loop() {
                 break;
             }
         }
+        
+        // Print a newline after a full frame or attempt so the hex dump is readable
+        std::printf("\n");
+        std::fflush(stdout);
 
         if (!frame_ok) {
             consecutive_failures++;
             continue;
         }
-
-        // ---- Hex Dump: Print ALL 9 raw bytes BEFORE checksum validation ----
-        std::printf("[Debug] Raw: %02X %02X %02X %02X %02X %02X %02X %02X %02X\n",
-                    frame[0], frame[1], frame[2], frame[3],
-                    frame[4], frame[5], frame[6], frame[7], frame[8]);
-        std::fflush(stdout);
 
         // ---- Checksum: sum bytes 0..7 into uint16_t, mask to 8 bits ----
         uint16_t sum = 0;
@@ -177,9 +171,6 @@ void TFLunaSensor::polling_loop() {
         uint8_t computed_checksum = static_cast<uint8_t>(sum & 0xFF);
 
         if (computed_checksum != frame[8]) {
-            std::printf("[Debug] Checksum FAIL: computed=0x%02X expected=0x%02X\n",
-                        computed_checksum, frame[8]);
-            std::fflush(stdout);
             consecutive_failures++;
             continue;
         }
@@ -188,10 +179,6 @@ void TFLunaSensor::polling_loop() {
         uint16_t dist_cm  = static_cast<uint16_t>(frame[2]) | (static_cast<uint16_t>(frame[3]) << 8);
         uint16_t strength = static_cast<uint16_t>(frame[4]) | (static_cast<uint16_t>(frame[5]) << 8);
         float distance_m  = dist_cm / 100.0f;
-
-        std::printf("[Debug] dist=%ucm  strength=%u  distance=%.2fm\n",
-                    dist_cm, strength, distance_m);
-        std::fflush(stdout);
 
         if (strength >= static_cast<uint16_t>(min_strength_)) {
             current_distance_m_.store(distance_m, std::memory_order_relaxed);
