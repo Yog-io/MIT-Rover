@@ -65,3 +65,13 @@ target_link_libraries(imu_test
     PRIVATE
         Threads::Threads
 )
+
+# ---------------------------------------------------------
+# Phase 6: LiDAR Ground-Truth Test
+# ---------------------------------------------------------
+add_executable(lidar_test src/lidar_main.cpp src/lidar/TFLunaSensor.cpp)
+target_include_directories(lidar_test PRIVATE src)
+target_link_libraries(lidar_test
+    PRIVATE
+        Threads::Threads
+)
