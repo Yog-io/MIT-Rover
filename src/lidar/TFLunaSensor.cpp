@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cstdio>
 #include <cstring>
+#include <cerrno>
 #include <chrono>
 
 #ifdef __linux__
@@ -109,14 +110,28 @@ void TFLunaSensor::polling_loop() {
 
     while (running_) {
 #ifdef __linux__
-        // ---- State 0: Wait for first 0x59 ----
+        // ---- RAW DUMP: Read 1 byte and print immediately ----
         uint8_t byte0 = 0;
-        if (!read_one_byte(serial_fd_, byte0)) {
-            consecutive_failures++;
-            continue;
+        {
+            ssize_t n = read(serial_fd_, &byte0, 1);
+            if (n > 0) {
+                printf("RX: %02X\n", byte0);
+            } else if (n == 0) {
+                printf("RX: EOF/0 bytes\n");
+            } else {
+                printf("RX: Error %d\n", errno);
+            }
+            fflush(stdout);
+
+            if (n != 1) {
+                consecutive_failures++;
+                continue;
+            }
         }
+
+        // ---- State 0: Continue only if this byte is 0x59 ----
         if (byte0 != 0x59) {
-            continue; // Not a header byte, keep scanning
+            continue;
         }
 
         // ---- State 1: Wait for second 0x59 ----
