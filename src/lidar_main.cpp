@@ -3,9 +3,20 @@
 #include <iomanip>
 #include <chrono>
 #include <thread>
+#include <csignal>
+#include <atomic>
+
+std::atomic<bool> g_running{true};
+
+void sigint_handler(int) {
+    g_running = false;
+}
 
 int main() {
     std::cout << "Starting TF-Luna 1D LiDAR Test..." << std::endl;
+
+    // Register signal handler for clean exit
+    std::signal(SIGINT, sigint_handler);
 
     TFLunaSensor lidar;
     
@@ -17,10 +28,8 @@ int main() {
     std::cout << "Starting background UART reading thread..." << std::endl;
     lidar.start();
 
-    // Print telemetry to terminal at 10 Hz for 10 seconds
-    const int target_frames = 100;
-    
-    for (int i = 0; i < target_frames; ++i) {
+    // Polling loop at 10 Hz
+    while (g_running) {
         float distance = lidar.get_distance_meters();
         
         std::cout << "\r[LiDAR] Ground-Truth Distance: ";

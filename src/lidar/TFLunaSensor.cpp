@@ -131,6 +131,16 @@ void TFLunaSensor::polling_loop() {
         // Search for the frame header 0x59 0x59
         uint8_t byte;
         int n = read(serial_fd_, &byte, 1);
+        
+        if (n > 0) {
+            static auto last_debug = std::chrono::steady_clock::now();
+            auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::seconds>(now - last_debug).count() >= 1) {
+                std::cout << "\r[Debug] UART reading active...                                    \n";
+                last_debug = now;
+            }
+        }
+
         if (n == 1 && byte == 0x59) {
             n = read(serial_fd_, &byte, 1);
             if (n == 1 && byte == 0x59) {
