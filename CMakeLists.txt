@@ -55,3 +55,13 @@ target_link_libraries(camera_test
         OpenMP::OpenMP_CXX
         Threads::Threads
 )
+
+# ---------------------------------------------------------
+# Phase 5: IMU Synchronization Test
+# ---------------------------------------------------------
+add_executable(imu_test src/imu_main.cpp src/imu/MPU6050Sensor.cpp)
+target_include_directories(imu_test PRIVATE src)
+target_link_libraries(imu_test
+    PRIVATE
+        Threads::Threads
+)
