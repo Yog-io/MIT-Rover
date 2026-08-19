@@ -21,7 +21,8 @@ TFLunaSensor::~TFLunaSensor() {
 
 bool TFLunaSensor::initialize(const std::string& port) {
 #ifdef __linux__
-    serial_fd_ = open(port.c_str(), O_RDWR | O_NOCTTY | O_NDELAY);
+    // Removed O_NDELAY to ensure read() can block up to VTIME
+    serial_fd_ = open(port.c_str(), O_RDWR | O_NOCTTY);
     if (serial_fd_ < 0) {
         std::cerr << "[TFLuna] Failed to open UART port: " << port << std::endl;
         return false;
@@ -64,14 +65,17 @@ bool TFLunaSensor::initialize(const std::string& port) {
     tty.c_oflag &= ~OPOST;
     tty.c_oflag &= ~ONLCR;
 
-    // Blocking read for at least 1 byte
-    tty.c_cc[VTIME] = 10; // 1 second timeout (deciseconds)
+    // Blocking read for at least 1 byte, 0.1s timeout
+    tty.c_cc[VTIME] = 1;
     tty.c_cc[VMIN] = 1;
 
     if (tcsetattr(serial_fd_, TCSANOW, &tty) != 0) {
         std::cerr << "[TFLuna] Failed to set termios attributes." << std::endl;
         return false;
     }
+
+    // Flush stale bytes from the serial buffer
+    tcflush(serial_fd_, TCIFLUSH);
 
     initialized_ = true;
     std::cout << "[TFLuna] Initialized UART successfully." << std::endl;
@@ -101,34 +105,12 @@ float TFLunaSensor::get_distance_meters() const {
     return current_distance_m_.load(std::memory_order_relaxed);
 }
 
-bool TFLunaSensor::parse_frame(uint8_t* buffer, float& distance_m, int& strength) {
-    // Checksum: lower 8 bits of the sum of first 8 bytes
-    int checksum = 0;
-    for (int i = 0; i < 8; ++i) {
-        checksum += buffer[i];
-    }
-    
-    if ((checksum & 0xFF) != buffer[8]) {
-        return false;
-    }
-
-    // Distance in cm
-    int dist_cm = buffer[2] + (buffer[3] << 8);
-    distance_m = dist_cm / 100.0f;
-    
-    // Signal strength
-    strength = buffer[4] + (buffer[5] << 8);
-    
-    return true;
-}
-
 void TFLunaSensor::polling_loop() {
     int consecutive_failures = 0;
     uint8_t buffer[9];
     
     while (running_) {
 #ifdef __linux__
-        // Search for the frame header 0x59 0x59
         uint8_t byte;
         int n = read(serial_fd_, &byte, 1);
         
@@ -140,14 +122,14 @@ void TFLunaSensor::polling_loop() {
                 last_debug = now;
             }
         }
-
+        
         if (n == 1 && byte == 0x59) {
             n = read(serial_fd_, &byte, 1);
             if (n == 1 && byte == 0x59) {
                 buffer[0] = 0x59;
                 buffer[1] = 0x59;
                 
-                // Read the rest of the 7 bytes
+                // Read remaining 7 bytes
                 int bytes_read = 0;
                 while (bytes_read < 7 && running_) {
                     n = read(serial_fd_, buffer + 2 + bytes_read, 7 - bytes_read);
@@ -156,28 +138,37 @@ void TFLunaSensor::polling_loop() {
                 
                 if (!running_) break;
 
-                float dist_m = 0.0f;
-                int strength = 0;
+                // Validate Checksum: sum(bytes 0..7) & 0xFF
+                uint8_t checksum = 0;
+                for (int i = 0; i < 8; ++i) {
+                    checksum += buffer[i];
+                }
                 
-                if (parse_frame(buffer, dist_m, strength) && strength >= min_strength_) {
-                    current_distance_m_.store(dist_m, std::memory_order_relaxed);
-                    consecutive_failures = 0;
+                if (checksum == buffer[8]) {
+                    float distance = (buffer[2] | (buffer[3] << 8)) / 100.0f;
+                    int strength = buffer[4] | (buffer[5] << 8);
+                    
+                    if (strength >= min_strength_) {
+                        current_distance_m_.store(distance, std::memory_order_relaxed);
+                        consecutive_failures = 0;
+                    } else {
+                        consecutive_failures++;
+                    }
                 } else {
                     consecutive_failures++;
                 }
+            } else {
+                consecutive_failures++;
             }
-        } else if (n < 0) {
-            // Read error or timeout
+        } else if (n <= 0) {
             consecutive_failures++;
         }
 #else
-        // Mock data stream: 1.5 meters constant
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         current_distance_m_.store(1.5f, std::memory_order_relaxed);
         consecutive_failures = 0;
 #endif
 
-        // If sensor fails repeatedly, mark as -1.0f (loss of lock)
         if (consecutive_failures > max_consecutive_failures_) {
             current_distance_m_.store(-1.0f, std::memory_order_relaxed);
             // Cap to prevent overflow
