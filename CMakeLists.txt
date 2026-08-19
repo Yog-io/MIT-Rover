@@ -17,6 +17,9 @@ find_package(OpenCV REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBCAMERA REQUIRED libcamera)
 
+# OpenMP for parallel processing
+find_package(OpenMP REQUIRED)
+
 # ---------------------------------------------------------
 # Phase 1: Backend
 # ---------------------------------------------------------
@@ -26,6 +29,7 @@ target_link_libraries(rover_backend
         Boost::system
         Boost::thread
         nlohmann_json::nlohmann_json
+        OpenMP::OpenMP_CXX
         Threads::Threads
 )
 
@@ -39,5 +43,6 @@ target_link_libraries(camera_test
     PRIVATE
         ${OpenCV_LIBS}
         ${LIBCAMERA_LIBRARIES}
+        OpenMP::OpenMP_CXX
         Threads::Threads
 )
