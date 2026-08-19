@@ -1,6 +1,8 @@
 #include "lidar/TFLunaSensor.hpp"
 #include <iostream>
+#include <iomanip>
 #include <chrono>
+#include <cstring>
 
 #ifdef __linux__
 #include <fcntl.h>
@@ -21,68 +23,53 @@ TFLunaSensor::~TFLunaSensor() {
 
 bool TFLunaSensor::initialize(const std::string& port) {
 #ifdef __linux__
-    // Removed O_NDELAY to ensure read() can block up to VTIME
-    serial_fd_ = open(port.c_str(), O_RDWR | O_NOCTTY);
+    serial_fd_ = open(port.c_str(), O_RDWR | O_NOCTTY | O_SYNC);
     if (serial_fd_ < 0) {
         std::cerr << "[TFLuna] Failed to open UART port: " << port << std::endl;
         return false;
     }
 
     struct termios tty;
+    std::memset(&tty, 0, sizeof(tty));
     if (tcgetattr(serial_fd_, &tty) != 0) {
         std::cerr << "[TFLuna] Failed to get termios attributes." << std::endl;
         return false;
     }
 
-    // Set Baud Rate 115200
-    cfsetospeed(&tty, B115200);
-    cfsetispeed(&tty, B115200);
+    // Use cfmakeraw to disable all canonical processing, echo, flow control, and character translations
+    cfmakeraw(&tty);
 
-    // 8N1 Mode
-    tty.c_cflag &= ~PARENB;
-    tty.c_cflag &= ~CSTOPB;
-    tty.c_cflag &= ~CSIZE;
-    tty.c_cflag |= CS8;
-    
-    // Disable hardware flow control
-    tty.c_cflag &= ~CRTSCTS;
-    
-    // Turn on READ & ignore ctrl lines
-    tty.c_cflag |= CREAD | CLOCAL;
+    // Explicitly configure specific flags
+    tty.c_cflag |= (CLOCAL | CREAD | CS8);
+    tty.c_cflag &= ~(PARENB | CSTOPB | CRTSCTS);
 
-    // Non-canonical mode
-    tty.c_lflag &= ~ICANON;
-    tty.c_lflag &= ~ECHO;
-    tty.c_lflag &= ~ECHOE;
-    tty.c_lflag &= ~ECHONL;
-    tty.c_lflag &= ~ISIG;
-    
-    // Disable software flow control
-    tty.c_iflag &= ~(IXON | IXOFF | IXANY);
-    tty.c_iflag &= ~(IGNBRK|BRKINT|PARMRK|ISTRIP|INLCR|IGNCR|ICRNL);
-    
-    // Raw output
-    tty.c_oflag &= ~OPOST;
-    tty.c_oflag &= ~ONLCR;
-
-    // Blocking read for at least 1 byte, 0.1s timeout
-    tty.c_cc[VTIME] = 1;
+    // Set timeout to 200ms
     tty.c_cc[VMIN] = 1;
+    tty.c_cc[VTIME] = 2; 
+
+    // Set Baud Rate 115200
+    cfsetispeed(&tty, B115200);
+    cfsetospeed(&tty, B115200);
 
     if (tcsetattr(serial_fd_, TCSANOW, &tty) != 0) {
         std::cerr << "[TFLuna] Failed to set termios attributes." << std::endl;
         return false;
     }
 
-    // Flush stale bytes from the serial buffer
-    tcflush(serial_fd_, TCIFLUSH);
+    // Flush stale bytes
+    tcflush(serial_fd_, TCIOFLUSH);
 
     initialized_ = true;
     std::cout << "[TFLuna] Initialized UART successfully." << std::endl;
+    
+    // Automatically start the background thread
+    start();
+    
     return true;
 #else
     std::cout << "[TFLuna] Mock initialized (macOS fallback)." << std::endl;
     initialized_ = true;
+    start();
     return true;
 #endif
 }
@@ -114,15 +101,6 @@ void TFLunaSensor::polling_loop() {
         uint8_t byte;
         int n = read(serial_fd_, &byte, 1);
         
-        if (n > 0) {
-            static auto last_debug = std::chrono::steady_clock::now();
-            auto now = std::chrono::steady_clock::now();
-            if (std::chrono::duration_cast<std::chrono::seconds>(now - last_debug).count() >= 1) {
-                std::cout << "\r[Debug] UART reading active...                                    \n";
-                last_debug = now;
-            }
-        }
-        
         if (n == 1 && byte == 0x59) {
             n = read(serial_fd_, &byte, 1);
             if (n == 1 && byte == 0x59) {
@@ -151,6 +129,14 @@ void TFLunaSensor::polling_loop() {
                     if (strength >= min_strength_) {
                         current_distance_m_.store(distance, std::memory_order_relaxed);
                         consecutive_failures = 0;
+                        
+                        // Debug print on successful parse
+                        static auto last_debug = std::chrono::steady_clock::now();
+                        auto now = std::chrono::steady_clock::now();
+                        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_debug).count() >= 1) {
+                            std::cout << "\r[Debug] UART locked: 0x59 0x59 header found. Checksum OK.   \n";
+                            last_debug = now;
+                        }
                     } else {
                         consecutive_failures++;
                     }
@@ -158,8 +144,18 @@ void TFLunaSensor::polling_loop() {
                     consecutive_failures++;
                 }
             } else {
+                // If second byte wasn't 0x59, print the raw byte occasionally for debugging
+                static auto last_fail = std::chrono::steady_clock::now();
+                auto now = std::chrono::steady_clock::now();
+                if (std::chrono::duration_cast<std::chrono::seconds>(now - last_fail).count() >= 1) {
+                    std::cout << "\r[Debug] Header mismatch. Got 0x59 0x" << std::hex << (int)byte << std::dec << "       \n";
+                    last_fail = now;
+                }
                 consecutive_failures++;
             }
+        } else if (n > 0) {
+            // First byte was not 0x59
+            consecutive_failures++;
         } else if (n <= 0) {
             consecutive_failures++;
         }
