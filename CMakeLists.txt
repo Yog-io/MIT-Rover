@@ -5,7 +5,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 # Find necessary dependencies
-# Boost Beast is header only and requires system/thread for basic networking if not fully header-only configured.
 find_package(Boost REQUIRED COMPONENTS system thread)
 find_package(Threads REQUIRED)
 find_package(nlohmann_json REQUIRED)
@@ -21,14 +20,24 @@ pkg_check_modules(LIBCAMERA REQUIRED libcamera)
 find_package(OpenMP REQUIRED)
 
 # ---------------------------------------------------------
-# Phase 1: Backend
+# Phase 4: Unified Backend Executable
 # ---------------------------------------------------------
-add_executable(rover_backend src/main.cpp)
+add_executable(rover_backend 
+    src/main.cpp
+    src/camera/DualCameraCapture.cpp
+    src/vision/HazardMapper.cpp
+)
+
+target_include_directories(rover_backend PRIVATE src ${LIBCAMERA_INCLUDE_DIRS})
+target_link_directories(rover_backend PRIVATE ${LIBCAMERA_LIBRARY_DIRS})
+
 target_link_libraries(rover_backend
     PRIVATE
         Boost::system
         Boost::thread
         nlohmann_json::nlohmann_json
+        ${OpenCV_LIBS}
+        ${LIBCAMERA_LIBRARIES}
         OpenMP::OpenMP_CXX
         Threads::Threads
 )
