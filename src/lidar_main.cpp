@@ -13,20 +13,18 @@ void sigint_handler(int) {
 }
 
 int main() {
-    std::cout << "Starting TF-Luna 1D LiDAR Test..." << std::endl;
+    std::cout << "Starting TF-Luna 1D LiDAR UDP Bridge Test..." << std::endl;
 
     // Register signal handler for clean exit
     std::signal(SIGINT, sigint_handler);
 
     TFLunaSensor lidar;
     
-    if (!lidar.initialize("/dev/serial0")) {
-        std::cerr << "Failed to initialize TF-Luna sensor." << std::endl;
+    // Initialize UDP receiver on port 9090
+    if (!lidar.initialize(9090)) {
+        std::cerr << "Failed to initialize TF-Luna UDP receiver." << std::endl;
         return -1;
     }
-
-    std::cout << "Starting background UART reading thread..." << std::endl;
-    lidar.start();
 
     // Polling loop at 10 Hz
     while (g_running) {
@@ -34,16 +32,16 @@ int main() {
         
         std::cout << "\r[LiDAR] Ground-Truth Distance: ";
         if (distance < 0.0f) {
-            std::cout << "NO LOCK (Strength < 100 or Blocked)   ";
+            std::cout << "NO LOCK (Python Bridge offline/blocked)   ";
         } else {
-            std::cout << std::fixed << std::setprecision(2) << std::setw(5) << distance << " meters                  ";
+            std::cout << std::fixed << std::setprecision(2) << std::setw(5) << distance << " meters                      ";
         }
         std::cout << std::flush;
                   
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    std::cout << "\nTest Complete. Stopping sensor..." << std::endl;
+    std::cout << "\nTest Complete. Stopping UDP receiver..." << std::endl;
     lidar.stop();
 
     return 0;
