@@ -9,13 +9,13 @@ public:
     TFLunaSensor();
     ~TFLunaSensor();
 
-    // Opens a UDP socket bound to the specified port
-    bool initialize(int udp_port = 9090);
+    // Opens I2C connection to the sensor
+    bool initialize(const std::string& i2c_device = "/dev/i2c-3", int address = 0x10);
 
     // Starts the continuous background reading thread
     void start();
 
-    // Stops the reading thread cleanly and closes the socket
+    // Stops the reading thread cleanly
     void stop();
 
     // Lock-free atomic read of the ground-truth distance in meters.
@@ -25,7 +25,7 @@ public:
 private:
     void polling_loop();
 
-    int udp_socket_ = -1;
+    int i2c_fd_ = -1;
     bool initialized_ = false;
 
     std::atomic<bool> running_{false};
@@ -33,4 +33,8 @@ private:
 
     // Lock-free storage of the latest valid distance
     std::atomic<float> current_distance_m_{-1.0f};
+
+    // Configurable thresholds
+    const int min_strength_ = 100;
+    const int max_consecutive_failures_ = 50; // ~1 second at 50Hz
 };
