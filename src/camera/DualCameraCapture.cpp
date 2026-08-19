@@ -148,7 +148,7 @@ void DualCameraCapture::requestComplete(Request* request, int camera_index) {
 
     // Extract sensor timestamp
     auto controls = request->metadata();
-    uint64_t timestamp = controls.contains(controls::SensorTimestamp) 
+    uint64_t timestamp = controls.contains(controls::SensorTimestamp.id()) 
                          ? controls.get(controls::SensorTimestamp) 
                          : request->buffers().begin()->second->metadata().timestamp;
 
