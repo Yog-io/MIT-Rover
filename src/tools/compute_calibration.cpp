@@ -23,6 +23,7 @@ int main() {
 
   std::cout << "[Calibration] Expected Board: " << BOARD_W << "x" << BOARD_H
             << " (Inner Corners)" << std::endl;
+  std::cout << "[Calibration] REMINDER: Ensure BOARD_W and BOARD_H represent INNER corners, not squares!" << std::endl;
   std::cout << "[Calibration] Square Size: " << SQUARE_SIZE << " mm"
             << std::endl;
 
