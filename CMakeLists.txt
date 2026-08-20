@@ -37,6 +37,7 @@ target_link_libraries(rover_backend
         Boost::thread
         nlohmann_json::nlohmann_json
         ${OpenCV_LIBS}
+        opencv_ximgproc
         ${LIBCAMERA_LIBRARIES}
         OpenMP::OpenMP_CXX
         Threads::Threads

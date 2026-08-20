@@ -1,69 +1,171 @@
 #include "vision/HazardMapper.hpp"
 #include <omp.h>
+#include <iostream>
 #include <cmath>
 
-HazardMapper::HazardMapper() {
-    stereo_ = cv::StereoBM::create(64, 9);
+HazardMapper::HazardMapper(const std::string& calib_file) {
+    load_calibration(calib_file);
+    setup_stereo_matchers();
 }
 
 HazardMapper::~HazardMapper() {}
 
-HazardReport HazardMapper::process(const cv::Mat& left_y, const cv::Mat& right_y) {
-    cv::Mat disparity_16s;
+void HazardMapper::load_calibration(const std::string& calib_file) {
+    bool loaded = false;
     
-    // OpenCV natively optimizes this block matching. 
-    // We let it run on the full image rather than slicing, avoiding border artifacts.
-    stereo_->compute(left_y, right_y, disparity_16s);
+    if (!calib_file.empty()) {
+        cv::FileStorage fs(calib_file, cv::FileStorage::READ);
+        if (fs.isOpened()) {
+            fs["K1"] >> K1_; fs["D1"] >> D1_;
+            fs["K2"] >> K2_; fs["D2"] >> D2_;
+            fs["R1"] >> R1_; fs["P1"] >> P1_;
+            fs["R2"] >> R2_; fs["P2"] >> P2_;
+            fs["Q"] >> Q_;
+            fs.release();
+            loaded = true;
+            std::cout << "[HazardMapper] Loaded stereo calibration from " << calib_file << std::endl;
+            
+            // Extract baseline and focal length from P2
+            if (!P2_.empty()) {
+                focal_length_px_ = P2_.at<double>(0, 0);
+                baseline_m_ = std::abs(P2_.at<double>(0, 3) / focal_length_px_);
+            }
+        } else {
+            std::cerr << "[HazardMapper] WARNING: Failed to open calibration file: " << calib_file << std::endl;
+        }
+    }
+    
+    if (!loaded) {
+        std::cerr << "[HazardMapper] WARNING: Using synthetic identity calibration matrices!" << std::endl;
+        // Provide synthetic/dummy identity matrices to prevent crashes
+        K1_ = cv::Mat::eye(3, 3, CV_64F); K1_.at<double>(0,0) = focal_length_px_; K1_.at<double>(1,1) = focal_length_px_;
+        K1_.at<double>(0,2) = 320.0; K1_.at<double>(1,2) = 240.0;
+        K2_ = K1_.clone();
+        D1_ = cv::Mat::zeros(1, 5, CV_64F);
+        D2_ = cv::Mat::zeros(1, 5, CV_64F);
+        R1_ = cv::Mat::eye(3, 3, CV_64F);
+        R2_ = cv::Mat::eye(3, 3, CV_64F);
+        P1_ = cv::Mat::eye(3, 4, CV_64F); P1_.at<double>(0,0) = focal_length_px_; P1_.at<double>(1,1) = focal_length_px_;
+        P2_ = P1_.clone();
+        P2_.at<double>(0,3) = -focal_length_px_ * baseline_m_; // Tx
+        Q_ = cv::Mat::zeros(4, 4, CV_64F);
+    }
 
-    int width = disparity_16s.cols;
-    int height = disparity_16s.rows;
+    // Precompute the rectification maps for a 640x480 resolution
+    cv::Size img_size(640, 480);
+    cv::initUndistortRectifyMap(K1_, D1_, R1_, P1_, img_size, CV_32FC1, map1x_, map1y_);
+    cv::initUndistortRectifyMap(K2_, D2_, R2_, P2_, img_size, CV_32FC1, map2x_, map2y_);
+}
+
+void HazardMapper::setup_stereo_matchers() {
+    int minDisparity = 0;
+    int numDisparities = 64;
+    int blockSize = 5;
+
+    left_matcher_ = cv::StereoSGBM::create(
+        minDisparity, numDisparities, blockSize,
+        8 * 1 * blockSize * blockSize, // P1
+        32 * 1 * blockSize * blockSize, // P2
+        1, // disp12MaxDiff
+        63, // preFilterCap
+        10, // uniquenessRatio
+        100, // speckleWindowSize
+        32, // speckleRange
+        cv::StereoSGBM::MODE_SGBM_3WAY
+    );
+
+    right_matcher_ = cv::ximgproc::createRightMatcher(left_matcher_);
+
+    wls_filter_ = cv::ximgproc::createDisparityWLSFilter(left_matcher_);
+    wls_filter_->setLambda(8000.0);
+    wls_filter_->setSigmaColor(1.5);
+}
+
+HazardReport HazardMapper::process(const cv::Mat& left_y, const cv::Mat& right_y, float lidar_distance_m) {
+    cv::Mat left_rect, right_rect;
+    
+    // 1. Mandatory Epipolar Rectification
+    cv::remap(left_y, left_rect, map1x_, map1y_, cv::INTER_LINEAR);
+    cv::remap(right_y, right_rect, map2x_, map2y_, cv::INTER_LINEAR);
+
+    // 2. StereoSGBM + WLS Filtering
+    cv::Mat left_disp, right_disp, filtered_disp;
+    
+    left_matcher_->compute(left_rect, right_rect, left_disp);
+    right_matcher_->compute(right_rect, left_rect, right_disp);
+    
+    wls_filter_->filter(left_disp, left_rect, filtered_disp, right_disp);
+
+    // Filtered disparity is 16-bit signed, with a scale factor of 16
+    int width = filtered_disp.cols;
+    int height = filtered_disp.rows;
     float cx = width / 2.0f;
     float cy = height / 2.0f;
 
-    // Master grid to hold the merged results from all threads
-    std::vector<std::vector<Cell>> master_grid(grid_size_, std::vector<Cell>(grid_size_));
+    HazardReport report;
+    report.closest_lethal_distance_m = std::numeric_limits<float>::infinity();
 
-    // OpenMP parallel region for 3D reprojection and grid binning
+    // 3. 1D LiDAR Scale Anchoring
+    int16_t center_d_val = filtered_disp.at<int16_t>(static_cast<int>(cy), static_cast<int>(cx));
+    float center_d = center_d_val / 16.0f;
+    
+    float scale_factor = 1.0f;
+    
+    if (center_d > 0.0f) {
+        report.center_stereo_depth_m = (focal_length_px_ * baseline_m_) / center_d;
+        
+        // Dynamic scale factor based on LiDAR ground truth
+        if (lidar_distance_m > 0.0f) {
+            scale_factor = lidar_distance_m / report.center_stereo_depth_m;
+        }
+    } else {
+        report.center_stereo_depth_m = -1.0f;
+    }
+
+    // Initialize raw elevation grid bounds
+    for (int y = 0; y < grid_size_; ++y) {
+        for (int x = 0; x < grid_size_; ++x) {
+            report.raw_elevation_grid[y][x].z_min = std::numeric_limits<float>::max();
+            report.raw_elevation_grid[y][x].z_max = std::numeric_limits<float>::lowest();
+            report.costmap[y][x] = 0;
+        }
+    }
+
+    // Thread-local master grid for openmp
+    std::vector<std::vector<LocalCell>> master_grid(grid_size_, std::vector<LocalCell>(grid_size_));
+
     #pragma omp parallel
     {
-        // Thread-local grid to avoid mutex locks during the intense binning phase
-        std::vector<std::vector<Cell>> local_grid(grid_size_, std::vector<Cell>(grid_size_));
+        std::vector<std::vector<LocalCell>> local_grid(grid_size_, std::vector<LocalCell>(grid_size_));
 
-        // Split the work by image rows across available CPU cores
         #pragma omp for nowait
         for (int v = 0; v < height; ++v) {
-            const int16_t* row_ptr = disparity_16s.ptr<int16_t>(v);
+            const int16_t* row_ptr = filtered_disp.ptr<int16_t>(v);
             
             for (int u = 0; u < width; ++u) {
                 int16_t d_val = row_ptr[u];
-                
-                // Discard invalid disparities (StereoBM returns <= 0 for invalid/occluded pixels)
                 if (d_val <= 0) continue;
                 
                 float d = d_val / 16.0f;
                 
-                // Standard pinhole geometry reprojection
+                // StereoSGBM Reprojection
                 float Z = (focal_length_px_ * baseline_m_) / d;
+                
+                // Apply LiDAR scale multiplier
+                Z *= scale_factor;
+                
                 float X = (u - cx) * Z / focal_length_px_;
                 float Y = (v - cy) * Z / focal_length_px_;
                 
-                // Map Camera Frame to Rover/World Frame:
-                // Camera Z (depth) -> World Y (forward into the grid)
-                // Camera X (right) -> World X (right in the grid)
-                // Camera Y (down)  -> World Z (elevation/height, flip sign so up is positive)
                 float world_y = Z; 
                 float world_x = X;
                 float world_z = -Y; 
 
-                // Discard points behind the rover or outside the 5-meter range
                 if (world_y < 0.0f || world_y >= (grid_size_ * cell_resolution_m_)) continue;
                 
-                // Calculate grid cell indices
-                // Rover is positioned at bottom-center (X=50, Y=0)
                 int grid_y = static_cast<int>(world_y / cell_resolution_m_);
                 int grid_x = static_cast<int>(world_x / cell_resolution_m_) + (grid_size_ / 2);
                 
-                // Bounds check
                 if (grid_x >= 0 && grid_x < grid_size_ && grid_y >= 0 && grid_y < grid_size_) {
                     auto& cell = local_grid[grid_y][grid_x];
                     if (world_z < cell.z_min) cell.z_min = world_z;
@@ -72,7 +174,6 @@ HazardReport HazardMapper::process(const cv::Mat& left_y, const cv::Mat& right_y
             }
         }
 
-        // Merge thread-local grid into the master grid safely
         #pragma omp critical
         {
             for (int r = 0; r < grid_size_; ++r) {
@@ -86,18 +187,14 @@ HazardReport HazardMapper::process(const cv::Mat& left_y, const cv::Mat& right_y
         }
     }
 
-    // Flag LETHAL obstacles and construct HazardReport
-    HazardReport report;
-    report.closest_lethal_distance_m = std::numeric_limits<float>::infinity();
-
-    // Iterate through the master grid
+    // Flag LETHAL obstacles and populate raw elevation
     for (int y = 0; y < grid_size_; ++y) {
         for (int x = 0; x < grid_size_; ++x) {
-            report.costmap[y][x] = 0; // Initialize as clear
-            
             const auto& cell = master_grid[y][x];
             
-            // Only evaluate cells that actually received 3D points
+            // Populate the raw grid for GlobalMapper
+            report.raw_elevation_grid[y][x] = cell;
+
             if (cell.z_min <= cell.z_max) {
                 float height_diff = cell.z_max - cell.z_min;
                 
@@ -105,8 +202,6 @@ HazardReport HazardMapper::process(const cv::Mat& left_y, const cv::Mat& right_y
                 if (height_diff > 0.05f) { 
                     report.costmap[y][x] = 255;
                     
-                    // Check if obstacle is directly in the forward driving sector (central 1 meter)
-                    // X indices between 40 and 60 represent -0.5m to +0.5m from the rover's center
                     if (x >= 40 && x <= 60) {
                         float dist_m = y * cell_resolution_m_;
                         if (dist_m < report.closest_lethal_distance_m) {
