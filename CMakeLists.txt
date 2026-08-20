@@ -102,3 +102,12 @@ target_link_libraries(test_mpu6050 PRIVATE Threads::Threads)
 add_executable(test_tfluna_i2c src/tests/test_tfluna_i2c.cpp src/lidar/TFLunaSensor.cpp)
 target_include_directories(test_tfluna_i2c PRIVATE src)
 target_link_libraries(test_tfluna_i2c PRIVATE Threads::Threads)
+
+# ---------------------------------------------------------
+# Tools Suite
+# ---------------------------------------------------------
+
+add_executable(capture_calibration src/tools/capture_calibration.cpp src/camera/DualCameraCapture.cpp)
+target_include_directories(capture_calibration PRIVATE src ${LIBCAMERA_INCLUDE_DIRS})
+target_link_directories(capture_calibration PRIVATE ${LIBCAMERA_LIBRARY_DIRS})
+target_link_libraries(capture_calibration PRIVATE ${OpenCV_LIBS} ${LIBCAMERA_LIBRARIES} OpenMP::OpenMP_CXX Threads::Threads)
