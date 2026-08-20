@@ -194,7 +194,8 @@ void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper) {
         }
 
         // Process stereo frame through OpenMP HazardMapper Pipeline
-        HazardReport report = mapper->process(stereo_pair->left_y, stereo_pair->right_y);
+        // TODO(Phase 7): Wire in actual LiDAR distance. Passing 1.0f dummy to compile.
+        HazardReport report = mapper->process(stereo_pair->left_y, stereo_pair->right_y, 1.0f);
 
         // State Fusion & Downsampling
         std::lock_guard<std::mutex> lock(g_hazard_mutex);
