@@ -31,6 +31,7 @@ add_executable(rover_backend
     src/imu/MPU6050Sensor.cpp
     src/lidar/TFLunaSensor.cpp
     src/actuation/MotorController.cpp
+    src/navigation/NavigationManager.cpp
 )
 
 target_include_directories(rover_backend PRIVATE src ${LIBCAMERA_INCLUDE_DIRS})

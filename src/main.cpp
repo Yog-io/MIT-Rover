@@ -23,6 +23,9 @@
 #include "lidar/TFLunaSensor.hpp"
 #include "vision/GlobalMapper.hpp"
 #include "network/UDPServer.hpp"
+#include "actuation/MotorController.hpp"
+#include "navigation/NavigationManager.hpp"
+#include "SharedState.hpp"
 
 namespace beast = boost::beast;
 namespace http = beast::http;
@@ -34,25 +37,7 @@ using json = nlohmann::json;
 // Global Mock Flag (for kinematics only now)
 std::atomic<bool> MOCK_HARDWARE_MODE{true};
 
-// Shared State
-struct RoverState {
-    std::string mode = "STANDBY";
-    float linear_v = 0.0f;
-    float angular_w = 0.0f;
-    float pos_x = 0.0f;
-    float pos_y = 0.0f;
-    float heading_deg = 0.0f;
-    bool arm_deployed = false;
-};
-
-struct HazardState {
-    std::string level = "CLEAR";
-    float distance_m = 99.0f;
-    std::string sector = "CENTER";
-    std::string type = "ROCK"; // Kept static for mock, would map to crater/rock realistically
-    std::vector<uint8_t> mini_map; // Downsampled 10x10 map for lightweight UI streaming
-};
-
+// Shared State instances
 RoverState g_rover_state;
 std::mutex g_state_mutex;
 
@@ -185,7 +170,7 @@ void do_accept(tcp::acceptor& acceptor, net::io_context& ioc) {
 // ----------------------------------------------------------------------------
 // Phase 4: Vision & Hardware Processing Thread (Replaces old mock thread)
 // ----------------------------------------------------------------------------
-void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper, TFLunaSensor* lidar, GlobalMapper* global_mapper) {
+void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper, TFLunaSensor* lidar, GlobalMapper* global_mapper, NavigationManager* nav_manager) {
     std::cout << "[Vision Thread] Started real-time stereo processing loop." << std::endl;
     
     while (true) {
@@ -243,6 +228,9 @@ void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper, TFLun
                 g_hazard_state.mini_map.push_back(lethal_count > 0 ? 255 : 0);
             }
         }
+        
+        // Navigation arbitration (tick runs every frame to process avoidance/overrides)
+        nav_manager->tick(report);
         
         // As loop iterates, stereo_pair goes out of scope and memory is re-queued to ISP!
     }
@@ -363,6 +351,9 @@ int main() {
     std::unique_ptr<TFLunaSensor> lidar = std::make_unique<TFLunaSensor>();
     std::unique_ptr<MPU6050Sensor> imu = std::make_unique<MPU6050Sensor>();
     std::unique_ptr<UDPServer> udp_server = std::make_unique<UDPServer>(9098);
+    std::unique_ptr<MotorController> motor_ctrl = std::make_unique<MotorController>();
+    std::unique_ptr<NavigationManager> nav_manager = std::make_unique<NavigationManager>(
+        motor_ctrl.get(), &g_rover_state, &g_hazard_state, &g_state_mutex, &g_hazard_mutex);
 
     // 1. Hardware Initialization
     if (!lidar->initialize("/dev/i2c-3", 0x10)) {
@@ -379,12 +370,17 @@ int main() {
         std::cerr << "[Fatal Error] Failed to initialize hardware cameras via libcamera." << std::endl;
         return -1;
     }
+    
+    if (!motor_ctrl->initialize()) {
+        std::cerr << "[Warning] Failed to initialize motor controller." << std::endl;
+    }
+
     std::cout << "[Backend] Cameras initialized successfully. Starting hardware streams..." << std::endl;
     dual_cam->start();
     udp_server->start();
 
     // 2. Spawn core threads
-    std::thread vision_thread(vision_thread_loop, dual_cam.get(), mapper.get(), lidar.get(), global_mapper.get());
+    std::thread vision_thread(vision_thread_loop, dual_cam.get(), mapper.get(), lidar.get(), global_mapper.get(), nav_manager.get());
     std::thread imu_thread(imu_thread_loop, imu.get());
     std::thread broadcast_thread(broadcast_thread_loop, global_mapper.get());
 
@@ -401,6 +397,7 @@ int main() {
     // Cleanup
     std::cout << "[Backend] Shutting down..." << std::endl;
     udp_server->stop();
+    motor_ctrl->stop();
     dual_cam->stop();
     lidar->stop();
     imu->stop();
