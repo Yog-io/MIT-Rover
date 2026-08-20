@@ -111,3 +111,7 @@ add_executable(capture_calibration src/tools/capture_calibration.cpp src/camera/
 target_include_directories(capture_calibration PRIVATE src ${LIBCAMERA_INCLUDE_DIRS})
 target_link_directories(capture_calibration PRIVATE ${LIBCAMERA_LIBRARY_DIRS})
 target_link_libraries(capture_calibration PRIVATE ${OpenCV_LIBS} ${LIBCAMERA_LIBRARIES} OpenMP::OpenMP_CXX Threads::Threads)
+
+add_executable(compute_calibration src/tools/compute_calibration.cpp)
+target_include_directories(compute_calibration PRIVATE src)
+target_link_libraries(compute_calibration PRIVATE ${OpenCV_LIBS})
