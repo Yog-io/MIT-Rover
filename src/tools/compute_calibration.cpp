@@ -64,14 +64,31 @@ int main() {
     if (image_size.width == 0) {
       image_size = img_left.size();
     }
+    
+    // Apply CLAHE to aggressively fix screen glare, low contrast, and lighting issues
+    cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(2.0, cv::Size(8, 8));
+    cv::Mat img_left_eq, img_right_eq;
+    clahe->apply(img_left, img_left_eq);
+    clahe->apply(img_right, img_right_eq);
 
     std::vector<cv::Point2f> corners_left, corners_right;
-    bool found_left = cv::findChessboardCorners(
-        img_left, board_size, corners_left,
-        cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE);
-    bool found_right = cv::findChessboardCorners(
-        img_right, board_size, corners_right,
-        cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE);
+    int flags = cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE | cv::CALIB_CB_FAST_CHECK;
+    
+    bool found_left = cv::findChessboardCorners(img_left_eq, board_size, corners_left, flags);
+    bool found_right = cv::findChessboardCorners(img_right_eq, board_size, corners_right, flags);
+    
+    // Auto-detect common sizes on failure (Debug assistance)
+    if ((!found_left || !found_right) && i == 0) {
+        std::vector<cv::Size> common_sizes = {cv::Size(9, 6), cv::Size(8, 6), cv::Size(7, 7), cv::Size(7, 5)};
+        for (auto& s : common_sizes) {
+            if (cv::findChessboardCorners(img_left_eq, s, corners_left, flags)) {
+                std::cerr << "\n[Calibration] DEBUG HINT: We failed to find an " << BOARD_W << "x" << BOARD_H 
+                          << " board, but successfully found a " << s.width << "x" << s.height 
+                          << " board in the first image! Please update BOARD_W and BOARD_H.\n" << std::endl;
+                break;
+            }
+        }
+    }
 
     if (found_left && found_right) {
       cv::cornerSubPix(
