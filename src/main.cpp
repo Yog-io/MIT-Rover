@@ -19,6 +19,10 @@
 // Phase 2 & 3 Hardware/Vision Includes
 #include "camera/DualCameraCapture.hpp"
 #include "vision/HazardMapper.hpp"
+#include "imu/MPU6050Sensor.hpp"
+#include "lidar/TFLunaSensor.hpp"
+#include "vision/GlobalMapper.hpp"
+#include "network/UDPServer.hpp"
 
 namespace beast = boost::beast;
 namespace http = beast::http;
@@ -181,7 +185,7 @@ void do_accept(tcp::acceptor& acceptor, net::io_context& ioc) {
 // ----------------------------------------------------------------------------
 // Phase 4: Vision & Hardware Processing Thread (Replaces old mock thread)
 // ----------------------------------------------------------------------------
-void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper) {
+void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper, TFLunaSensor* lidar, GlobalMapper* global_mapper) {
     std::cout << "[Vision Thread] Started real-time stereo processing loop." << std::endl;
     
     while (true) {
@@ -194,11 +198,22 @@ void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper) {
         }
 
         // Process stereo frame through OpenMP HazardMapper Pipeline
-        // TODO(Phase 7): Wire in actual LiDAR distance. Passing 1.0f dummy to compile.
-        HazardReport report = mapper->process(stereo_pair->left_y, stereo_pair->right_y, 1.0f);
+        float lidar_dist = lidar->get_distance_meters();
+        if (lidar_dist < 0.0f) {
+            lidar_dist = 1.0f; // Default if invalid
+        }
+        HazardReport report = mapper->process(stereo_pair->left_y, stereo_pair->right_y, lidar_dist);
 
         // State Fusion & Downsampling
         std::lock_guard<std::mutex> lock(g_hazard_mutex);
+        
+        // Update global map with the latest local report and heading
+        float current_heading = 0.0f;
+        {
+            std::lock_guard<std::mutex> state_lock(g_state_mutex);
+            current_heading = g_rover_state.heading_deg;
+        }
+        global_mapper->update_map(report, current_heading);
         
         g_hazard_state.distance_m = report.closest_lethal_distance_m;
         
@@ -234,18 +249,29 @@ void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper) {
 }
 
 // ----------------------------------------------------------------------------
+// Phase 4: IMU Polling Thread (50 Hz)
+// ----------------------------------------------------------------------------
+void imu_thread_loop(MPU6050Sensor* imu) {
+    std::cout << "[IMU Thread] Started 50 Hz state update loop." << std::endl;
+    while (true) {
+        IMUData data = imu->get_orientation();
+        {
+            std::lock_guard<std::mutex> lock(g_state_mutex);
+            g_rover_state.heading_deg = data.yaw;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+}
+
+// ----------------------------------------------------------------------------
 // Phase 4: Lightweight Broadcasting Loop (15 Hz)
 // ----------------------------------------------------------------------------
-void broadcast_thread_loop() {
+void broadcast_thread_loop(GlobalMapper* global_mapper) {
     std::cout << "[Broadcast Thread] Started 15 Hz telemetry loop." << std::endl;
     
     auto last_time = std::chrono::steady_clock::now();
     
-    // Environment Mock
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> dist_env_temp(10.0f, 35.0f);
-    std::uniform_real_distribution<float> dist_env_hum(20.0f, 60.0f);
+    auto last_time = std::chrono::steady_clock::now();
 
     while (true) {
         auto now = std::chrono::steady_clock::now();
@@ -259,8 +285,8 @@ void broadcast_thread_loop() {
             float heading_rad = g_rover_state.heading_deg * (M_PI / 180.0f);
             g_rover_state.pos_x += g_rover_state.linear_v * std::cos(heading_rad) * dt;
             g_rover_state.pos_y += g_rover_state.linear_v * std::sin(heading_rad) * dt;
-            g_rover_state.heading_deg += g_rover_state.angular_w * dt; 
             
+            // Note: heading_deg is now updated by IMU thread, so we skip simulating angular velocity here.
             while (g_rover_state.heading_deg >= 360.0f) g_rover_state.heading_deg -= 360.0f;
             while (g_rover_state.heading_deg < 0.0f) g_rover_state.heading_deg += 360.0f;
 
@@ -301,10 +327,12 @@ void broadcast_thread_loop() {
         };
 
         telemetry["environment"] = {
-            {"temp_c", dist_env_temp(gen)},
-            {"humidity", dist_env_hum(gen)},
-            {"soil_moisture_detected", false} 
+            {"temp_c", g_env_temp.load()},
+            {"humidity", g_env_humidity.load()},
+            {"soil_moisture_detected", g_env_moisture.load() > 0.0f} // Boolean mapping from raw analog value
         };
+        
+        telemetry["global_map"] = json::parse(global_mapper->get_global_map_json());
 
         std::string payload = telemetry.dump();
 
@@ -331,18 +359,34 @@ int main() {
     
     std::unique_ptr<DualCameraCapture> dual_cam = std::make_unique<DualCameraCapture>();
     std::unique_ptr<HazardMapper> mapper = std::make_unique<HazardMapper>();
+    std::unique_ptr<GlobalMapper> global_mapper = std::make_unique<GlobalMapper>();
+    std::unique_ptr<TFLunaSensor> lidar = std::make_unique<TFLunaSensor>();
+    std::unique_ptr<MPU6050Sensor> imu = std::make_unique<MPU6050Sensor>();
+    std::unique_ptr<UDPServer> udp_server = std::make_unique<UDPServer>(9098);
 
     // 1. Hardware Initialization
+    if (!lidar->initialize("/dev/i2c-3", 0x10)) {
+        std::cerr << "[Warning] Failed to initialize TF-Luna LiDAR." << std::endl;
+    }
+    lidar->start();
+
+    if (!imu->initialize("/dev/i2c-1", 0x68)) {
+        std::cerr << "[Warning] Failed to initialize MPU6050 IMU." << std::endl;
+    }
+    imu->start();
+
     if (!dual_cam->initialize()) {
         std::cerr << "[Fatal Error] Failed to initialize hardware cameras via libcamera." << std::endl;
         return -1;
     }
     std::cout << "[Backend] Cameras initialized successfully. Starting hardware streams..." << std::endl;
     dual_cam->start();
+    udp_server->start();
 
     // 2. Spawn core threads
-    std::thread vision_thread(vision_thread_loop, dual_cam.get(), mapper.get());
-    std::thread broadcast_thread(broadcast_thread_loop);
+    std::thread vision_thread(vision_thread_loop, dual_cam.get(), mapper.get(), lidar.get(), global_mapper.get());
+    std::thread imu_thread(imu_thread_loop, imu.get());
+    std::thread broadcast_thread(broadcast_thread_loop, global_mapper.get());
 
     // 3. Setup Networking
     net::io_context ioc{1};
@@ -356,8 +400,12 @@ int main() {
 
     // Cleanup
     std::cout << "[Backend] Shutting down..." << std::endl;
+    udp_server->stop();
     dual_cam->stop();
+    lidar->stop();
+    imu->stop();
     vision_thread.join();
+    imu_thread.join();
     broadcast_thread.join();
     
     return 0;
