@@ -34,7 +34,6 @@ int main() {
     std::cout << "[Diagnostic] Saved raw Y-channel frames to 'left_test.png' and 'right_test.png'" << std::endl;
     std::cout << "[Diagnostic] StereoBM processing is temporarily disabled pending visual verification." << std::endl;
     
-    /*
     cv::Mat disparity_16s;
     
     auto start_time = std::chrono::steady_clock::now();
@@ -69,7 +68,7 @@ int main() {
     disparity_16s.convertTo(disp_8u, CV_8U, 255.0 / (64 * 16.0));
     cv::imwrite("disparity_test.png", disp_8u);
     std::cout << "[Diagnostic] Saved disparity map to disparity_test.png" << std::endl;
-    */
+
     
     dual_cam.stop();
     return 0;
