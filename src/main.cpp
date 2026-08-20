@@ -350,8 +350,9 @@ int main() {
     std::unique_ptr<GlobalMapper> global_mapper = std::make_unique<GlobalMapper>();
     std::unique_ptr<TFLunaSensor> lidar = std::make_unique<TFLunaSensor>();
     std::unique_ptr<MPU6050Sensor> imu = std::make_unique<MPU6050Sensor>();
-    std::unique_ptr<UDPServer> udp_server = std::make_unique<UDPServer>(9098);
     std::unique_ptr<MotorController> motor_ctrl = std::make_unique<MotorController>();
+    std::unique_ptr<UDPServer> udp_server = std::make_unique<UDPServer>(
+        global_mapper.get(), &g_rover_state, &g_state_mutex, 9098);
     std::unique_ptr<NavigationManager> nav_manager = std::make_unique<NavigationManager>(
         motor_ctrl.get(), &g_rover_state, &g_hazard_state, &g_state_mutex, &g_hazard_mutex);
 

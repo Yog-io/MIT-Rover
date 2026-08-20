@@ -4,7 +4,9 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <arpa/inet.h>
 #include <unistd.h>
+#include <chrono>
 
 using json = nlohmann::json;
 
@@ -12,11 +14,19 @@ using json = nlohmann::json;
 std::atomic<float> g_env_temp{0.0f};
 std::atomic<float> g_env_humidity{0.0f};
 std::atomic<float> g_env_moisture{0.0f};
+std::atomic<float> g_env_press{0.0f};
+std::atomic<int> g_env_servo_pos{0};
 
-UDPServer::UDPServer(int port) : port_(port), socket_fd_(-1) {}
+UDPServer::UDPServer(GlobalMapper* mapper, RoverState* rover_state, std::mutex* state_mutex, int port)
+    : global_mapper_(mapper), rover_state_(rover_state), state_mutex_(state_mutex), port_(port), socket_fd_(-1) {}
 
 UDPServer::~UDPServer() {
     stop();
+}
+
+uint64_t UDPServer::get_current_time_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
 void UDPServer::start() {
@@ -90,6 +100,45 @@ void UDPServer::listener_loop() {
                 }
                 if (payload.contains("moisture")) {
                     g_env_moisture.store(payload["moisture"].get<float>());
+                }
+                if (payload.contains("bmp_press")) {
+                    g_env_press.store(payload["bmp_press"].get<float>());
+                }
+                if (payload.contains("servo_pos")) {
+                    g_env_servo_pos.store(payload["servo_pos"].get<int>());
+                }
+                if (payload.contains("soil_raw")) {
+                    float soil_raw = payload["soil_raw"].get<float>();
+                    g_env_moisture.store(soil_raw); // Or map to another variable if needed
+                    
+                    if (soil_raw > 300.0f) {
+                        uint64_t now = get_current_time_ms();
+                        if (now - last_poi_time_ > 5000) {
+                            last_poi_time_ = now;
+                            
+                            ScientificPOI poi;
+                            poi.type = "soil_anomaly";
+                            poi.temp = g_env_temp.load();
+                            poi.pressure = g_env_press.load();
+                            poi.moisture_val = static_cast<int>(soil_raw);
+                            poi.timestamp_ms = now;
+
+                            // Safely fetch current location
+                            if (state_mutex_ && rover_state_) {
+                                std::lock_guard<std::mutex> lock(*state_mutex_);
+                                poi.x = rover_state_->pos_x;
+                                poi.y = rover_state_->pos_y;
+                            } else {
+                                poi.x = 0.0f;
+                                poi.y = 0.0f;
+                            }
+
+                            if (global_mapper_) {
+                                global_mapper_->add_poi(poi);
+                                std::cout << "[UDPServer] Scientific POI Pinned at (" << poi.x << ", " << poi.y << ")!" << std::endl;
+                            }
+                        }
+                    }
                 }
             } catch (const std::exception& e) {
                 // Ignore parsing errors for robust background listening

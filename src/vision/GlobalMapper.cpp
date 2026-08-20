@@ -8,6 +8,11 @@ GlobalMapper::GlobalMapper() {
     global_grid_.fill(0);
 }
 
+void GlobalMapper::add_poi(const ScientificPOI& poi) {
+    std::lock_guard<std::mutex> lock(pois_mutex_);
+    scientific_pois_.push_back(poi);
+}
+
 void GlobalMapper::update_map(const HazardReport& local_report, float current_yaw_deg) {
     std::lock_guard<std::mutex> lock(grid_mutex_);
 
@@ -62,12 +67,29 @@ std::string GlobalMapper::get_global_map_json() {
             active_points.push_back({x, y, global_grid_[i]});
         }
     }
+
+    json pois_array = json::array();
+    {
+        std::lock_guard<std::mutex> poi_lock(pois_mutex_);
+        for (const auto& poi : scientific_pois_) {
+            pois_array.push_back({
+                {"type", poi.type},
+                {"x", poi.x},
+                {"y", poi.y},
+                {"temp", poi.temp},
+                {"pressure", poi.pressure},
+                {"moisture_val", poi.moisture_val},
+                {"timestamp_ms", poi.timestamp_ms}
+            });
+        }
+    }
     
     json output;
     output["type"] = "global_map";
     output["size"] = GLOBAL_SIZE;
     output["resolution_m"] = RESOLUTION_M;
     output["points"] = active_points;
+    output["pois"] = pois_array;
 
     return output.dump();
 }
