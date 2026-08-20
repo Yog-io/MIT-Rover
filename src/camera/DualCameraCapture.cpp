@@ -210,8 +210,9 @@ std::unique_ptr<StereoFramePair> DualCameraCapture::get_stereo_pair() {
     
     // Create zero-copy cv::Mat wrapper for the Y channel (luminance)
     // The Y plane is exactly at the start of the buffer with size height * stride.
-    cv::Mat left_y(height_[0], stride_[0], CV_8UC1, mem0);
-    cv::Mat right_y(height_[1], stride_[1], CV_8UC1, mem1);
+    // We strictly extract the 640x480 active region, passing the DMA-BUF stride to OpenCV.
+    cv::Mat left_y(height_[0], 640, CV_8UC1, mem0, stride_[0]);
+    cv::Mat right_y(height_[1], 640, CV_8UC1, mem1, stride_[1]);
     
     return std::make_unique<StereoFramePair>(left_y, right_y, req0, req1, this);
 }
