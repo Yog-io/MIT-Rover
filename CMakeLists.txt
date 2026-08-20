@@ -30,10 +30,13 @@ add_executable(rover_backend
     src/network/UDPServer.cpp
     src/imu/MPU6050Sensor.cpp
     src/lidar/TFLunaSensor.cpp
+    src/actuation/MotorController.cpp
 )
 
 target_include_directories(rover_backend PRIVATE src ${LIBCAMERA_INCLUDE_DIRS})
 target_link_directories(rover_backend PRIVATE ${LIBCAMERA_LIBRARY_DIRS})
+
+find_library(LGPIO_LIB lgpio)
 
 target_link_libraries(rover_backend
     PRIVATE
@@ -46,6 +49,10 @@ target_link_libraries(rover_backend
         OpenMP::OpenMP_CXX
         Threads::Threads
 )
+
+if(LGPIO_LIB)
+    target_link_libraries(rover_backend PRIVATE ${LGPIO_LIB})
+endif()
 
 # ---------------------------------------------------------
 # Phase 2: Dual Camera Synchronization Test
