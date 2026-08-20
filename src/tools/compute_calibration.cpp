@@ -4,15 +4,24 @@
 #include <string>
 #include <iomanip>
 #include <sstream>
+#include <unistd.h>
 
 int main() {
-    std::cout << "[Calibration] Starting Stereo Calibration Processor..." << std::endl;
+    std::cout << "==================================================" << std::endl;
+    std::cout << "[Calibration] Starting Stereo Calibration Processor" << std::endl;
+    std::cout << "==================================================" << std::endl;
 
     // --- Configuration Parameters ---
-    // Change these if your checkerboard dimensions differ
-    const float square_size_mm = 25.0f;
-    const cv::Size board_size(9, 6); // Number of inner corners (width, height)
-    const int num_pairs = 20;
+    // User must change these to match their screen's INNER corners
+    const int BOARD_W = 9; 
+    const int BOARD_H = 6; 
+    const float SQUARE_SIZE = 25.0f;
+    const int NUM_PAIRS = 20;
+    
+    std::cout << "[Calibration] Expected Board: " << BOARD_W << "x" << BOARD_H << " (Inner Corners)" << std::endl;
+    std::cout << "[Calibration] Square Size: " << SQUARE_SIZE << " mm" << std::endl;
+    
+    const cv::Size board_size(BOARD_W, BOARD_H);
     
     std::vector<std::vector<cv::Point3f>> object_points;
     std::vector<std::vector<cv::Point2f>> image_points_left;
@@ -20,16 +29,17 @@ int main() {
     
     // Precompute 3D coordinates of the checkerboard corners
     std::vector<cv::Point3f> obj;
-    for (int i = 0; i < board_size.height; i++) {
-        for (int j = 0; j < board_size.width; j++) {
-            obj.push_back(cv::Point3f(j * square_size_mm, i * square_size_mm, 0.0f));
+    for (int i = 0; i < BOARD_H; i++) {
+        for (int j = 0; j < BOARD_W; j++) {
+            obj.push_back(cv::Point3f(j * SQUARE_SIZE, i * SQUARE_SIZE, 0.0f));
         }
     }
     
     cv::Size image_size;
     int valid_pairs = 0;
 
-    for (int i = 0; i < num_pairs; i++) {
+    std::cout << "\n[Calibration] --- Commencing Corner Detection ---" << std::endl;
+    for (int i = 0; i < NUM_PAIRS; i++) {
         std::stringstream ss_left, ss_right;
         ss_left << "calib_left_" << std::setfill('0') << std::setw(2) << i << ".png";
         ss_right << "calib_right_" << std::setfill('0') << std::setw(2) << i << ".png";
@@ -38,7 +48,7 @@ int main() {
         cv::Mat img_right = cv::imread(ss_right.str(), cv::IMREAD_GRAYSCALE);
         
         if (img_left.empty() || img_right.empty()) {
-            std::cerr << "[Calibration] Failed to load pair " << i << std::endl;
+            std::cout << "[Pair " << i << "] FAILED (Images not found/readable)" << std::endl;
             continue;
         }
         
@@ -62,15 +72,18 @@ int main() {
             image_points_right.push_back(corners_right);
             object_points.push_back(obj);
             
-            std::cout << "[Calibration] Pair " << i << ": SUCCESS" << std::endl;
+            std::cout << "[Pair " << i << "] LEFT: OK | RIGHT: OK -> ACCEPTED" << std::endl;
             valid_pairs++;
         } else {
-            std::cout << "[Calibration] Pair " << i << ": FAILED (Corners not fully detected)" << std::endl;
+            std::cout << "[Pair " << i << "] LEFT: " << (found_left ? "OK" : "FAILED") 
+                      << " | RIGHT: " << (found_right ? "OK" : "FAILED") << " -> REJECTED" << std::endl;
         }
     }
     
+    // Lowered threshold: proceed if at least 5 valid pairs are found
     if (valid_pairs < 5) {
-        std::cerr << "[Calibration] ERROR: Not enough valid pairs for robust calibration. Found: " << valid_pairs << std::endl;
+        std::cerr << "\n[Calibration] FATAL ERROR: Only " << valid_pairs 
+                  << " valid pairs found. At least 5 are required." << std::endl;
         return -1;
     }
     
@@ -78,7 +91,6 @@ int main() {
 
     cv::Mat K1, D1, K2, D2, R, T, E, F;
     
-    // Initial intrinsic guess can help, but we'll let the solver calculate it
     double rms = cv::stereoCalibrate(object_points, image_points_left, image_points_right,
                                      K1, D1, K2, D2, image_size, R, T, E, F,
                                      cv::CALIB_FIX_ASPECT_RATIO | cv::CALIB_ZERO_TANGENT_DIST | cv::CALIB_SAME_FOCAL_LENGTH,
@@ -91,10 +103,12 @@ int main() {
     cv::stereoRectify(K1, D1, K2, D2, image_size, R, T, R1, R2, P1, P2, Q,
                       cv::CALIB_ZERO_DISPARITY, 0, image_size);
                       
-    std::cout << "[Calibration] Saving matrices to stereo_calib.xml..." << std::endl;
-    cv::FileStorage fs("stereo_calib.xml", cv::FileStorage::WRITE);
+    std::string filename = "stereo_calib.xml";
+    std::cout << "[Calibration] Saving matrices to " << filename << "..." << std::endl;
+    cv::FileStorage fs(filename, cv::FileStorage::WRITE);
+    
     if (!fs.isOpened()) {
-        std::cerr << "[Calibration] ERROR: Failed to open stereo_calib.xml for writing!" << std::endl;
+        std::cerr << "[Calibration] FATAL ERROR: Failed to open " << filename << " for writing!" << std::endl;
         return -1;
     }
     
@@ -105,6 +119,12 @@ int main() {
     fs << "Q" << Q;
     fs.release();
     
-    std::cout << "[Calibration] Success! Calibration saved." << std::endl;
+    char cwd[1024];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        std::cout << "[Calibration] Success! Calibration saved to: " << cwd << "/" << filename << std::endl;
+    } else {
+        std::cout << "[Calibration] Success! Calibration saved to: " << filename << std::endl;
+    }
+    
     return 0;
 }
