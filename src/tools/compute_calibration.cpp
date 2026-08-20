@@ -72,17 +72,22 @@ int main() {
     clahe->apply(img_left, img_left_eq);
     clahe->apply(img_right, img_right_eq);
 
+    // 1. Pre-processing: Apply GaussianBlur to suppress Moiré patterns and high-frequency noise from laptop screens
+    cv::Mat img_left_blur, img_right_blur;
+    cv::GaussianBlur(img_left_eq, img_left_blur, cv::Size(5, 5), 0);
+    cv::GaussianBlur(img_right_eq, img_right_blur, cv::Size(5, 5), 0);
+
     std::vector<cv::Point2f> corners_left, corners_right;
     int flags = cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE | cv::CALIB_CB_FAST_CHECK;
     
-    bool found_left = cv::findChessboardCorners(img_left_eq, board_size, corners_left, flags);
-    bool found_right = cv::findChessboardCorners(img_right_eq, board_size, corners_right, flags);
+    bool found_left = cv::findChessboardCorners(img_left_blur, board_size, corners_left, flags);
+    bool found_right = cv::findChessboardCorners(img_right_blur, board_size, corners_right, flags);
     
     // Auto-detect common sizes on failure (Debug assistance)
     if ((!found_left || !found_right) && i == 0) {
         std::vector<cv::Size> common_sizes = {cv::Size(9, 6), cv::Size(8, 6), cv::Size(7, 7), cv::Size(7, 5)};
         for (auto& s : common_sizes) {
-            if (cv::findChessboardCorners(img_left_eq, s, corners_left, flags)) {
+            if (cv::findChessboardCorners(img_left_blur, s, corners_left, flags)) {
                 std::cerr << "\n[Calibration] DEBUG HINT: We failed to find an " << BOARD_W << "x" << BOARD_H 
                           << " board, but successfully found a " << s.width << "x" << s.height 
                           << " board in the first image! Please update BOARD_W and BOARD_H.\n" << std::endl;
@@ -108,10 +113,31 @@ int main() {
       std::cout << "[Pair " << i << "] LEFT: OK | RIGHT: OK -> ACCEPTED"
                 << std::endl;
       valid_pairs++;
+      
+      // 2. Visual Debugging (Success)
+      cv::Mat debug_left_color, debug_right_color;
+      cv::cvtColor(img_left, debug_left_color, cv::COLOR_GRAY2BGR);
+      cv::cvtColor(img_right, debug_right_color, cv::COLOR_GRAY2BGR);
+      cv::drawChessboardCorners(debug_left_color, board_size, corners_left, found_left);
+      cv::drawChessboardCorners(debug_right_color, board_size, corners_right, found_right);
+      
+      std::stringstream sl, sr;
+      sl << "debug_found_pair_" << i << "_left.png";
+      sr << "debug_found_pair_" << i << "_right.png";
+      cv::imwrite(sl.str(), debug_left_color);
+      cv::imwrite(sr.str(), debug_right_color);
+
     } else {
       std::cout << "[Pair " << i << "] LEFT: " << (found_left ? "OK" : "FAILED")
                 << " | RIGHT: " << (found_right ? "OK" : "FAILED")
                 << " -> REJECTED" << std::endl;
+                
+      // 3. Failure Debugging (Save the actual blurred/eq image being processed)
+      std::stringstream sl, sr;
+      sl << "debug_failed_pair_" << i << "_left.png";
+      sr << "debug_failed_pair_" << i << "_right.png";
+      cv::imwrite(sl.str(), img_left_blur);
+      cv::imwrite(sr.str(), img_right_blur);
     }
   }
 
