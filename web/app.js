@@ -25,13 +25,15 @@ const MAP_METER_SIZE = 20; // 20x20m map
 
 // State
 let ws = null;
+let reconnectTimeout = null;
 let currentMode = "MANUAL";
 let mapGrid = new Uint8Array(GRID_SIZE * GRID_SIZE); // 0: Unknown, 1: Traversable, 2: Hazard
 let roverPose = { x: 0, y: 0, yaw: 0 };
 let activeKeys = { w: false, a: false, s: false, d: false };
 
 // Initialize default WS URL
-wsUrlInput.value = `ws://${window.location.hostname || 'localhost'}:8080`;
+const defaultWsUrl = `ws://${window.location.hostname || 'localhost'}:8080`;
+wsUrlInput.value = defaultWsUrl;
 
 // Setup Canvas Initial State
 ctx.fillStyle = '#111111'; // Unknown black
@@ -39,7 +41,11 @@ ctx.fillRect(0, 0, canvas.width, canvas.height);
 
 // WebSocket Connection
 function connectWebSocket() {
-    if (ws) ws.close();
+    if (ws) {
+        ws.onclose = null;
+        ws.close();
+    }
+    if (reconnectTimeout) clearTimeout(reconnectTimeout);
     
     const url = wsUrlInput.value;
     connectionStatus.textContent = 'Connecting...';
@@ -56,6 +62,7 @@ function connectWebSocket() {
         ws.onclose = () => {
             connectionStatus.textContent = 'Disconnected';
             connectionStatus.className = 'status-indicator disconnected';
+            reconnectTimeout = setTimeout(connectWebSocket, 2000);
         };
         
         ws.onerror = (error) => {
@@ -80,6 +87,9 @@ function connectWebSocket() {
 }
 
 connectBtn.addEventListener('click', connectWebSocket);
+
+// Auto-connect on load
+window.addEventListener('load', connectWebSocket);
 
 // Handle Incoming Telemetry
 function handleTelemetry(data) {
