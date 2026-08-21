@@ -13,11 +13,20 @@ void GlobalMapper::add_poi(const ScientificPOI& poi) {
     scientific_pois_.push_back(poi);
 }
 
-void GlobalMapper::update_map(const HazardReport& local_report, float current_yaw_deg) {
+void GlobalMapper::update_map(const HazardReport& local_report,
+                               float current_yaw_deg,
+                               float cmd_linear_v,
+                               float delta_time_sec) {
     std::lock_guard<std::mutex> lock(grid_mutex_);
 
-    // Convert yaw to radians
+    // --- Dead-Reckoning Integration ---
+    // Integrate the rover's velocity over the elapsed time to update its
+    // estimated position in the global map. This is the missing translation
+    // that prevents the local map from spinning in place at the global origin.
     float yaw_rad = current_yaw_deg * M_PI / 180.0f;
+    rover_global_x_m_ += cmd_linear_v * delta_time_sec * std::cos(yaw_rad);
+    rover_global_y_m_ += cmd_linear_v * delta_time_sec * std::sin(yaw_rad);
+
     float cos_yaw = std::cos(yaw_rad);
     float sin_yaw = std::sin(yaw_rad);
 
@@ -27,27 +36,39 @@ void GlobalMapper::update_map(const HazardReport& local_report, float current_ya
     int global_cx = GLOBAL_SIZE / 2;
     int global_cy = GLOBAL_SIZE / 2;
 
+    // Translation offset in grid cells from the global origin to rover position
+    int tx_cells = static_cast<int>(std::round(rover_global_x_m_ / RESOLUTION_M));
+    int ty_cells = static_cast<int>(std::round(rover_global_y_m_ / RESOLUTION_M));
+
     for (int y = 0; y < LOCAL_SIZE; ++y) {
         for (int x = 0; x < LOCAL_SIZE; ++x) {
             uint8_t cell_value = local_report.costmap[y][x];
             
             // Only map active hazard points
             if (cell_value > 0) {
-                // Local coordinate relative to rover center
+                // Local coordinate relative to rover center (in grid cells)
                 float lx = static_cast<float>(x - local_cx);
                 float ly = static_cast<float>(y - local_cy);
 
-                // Rotate by current yaw
+                // Rotate local cell by rover yaw to align with global frame
                 float gx = lx * cos_yaw - ly * sin_yaw;
                 float gy = lx * sin_yaw + ly * cos_yaw;
 
-                // Map to global grid index
-                int global_x = global_cx + static_cast<int>(std::round(gx));
-                int global_y = global_cy + static_cast<int>(std::round(gy));
+                // Translate from rover's current global position into the global grid
+                int global_x = global_cx + tx_cells + static_cast<int>(std::round(gx));
+                int global_y = global_cy + ty_cells + static_cast<int>(std::round(gy));
 
-                // Check bounds
-                if (global_x >= 0 && global_x < GLOBAL_SIZE && global_y >= 0 && global_y < GLOBAL_SIZE) {
-                    global_grid_[global_y * GLOBAL_SIZE + global_x] = static_cast<int8_t>(cell_value);
+                // Bounds check
+                if (global_x >= 0 && global_x < GLOBAL_SIZE &&
+                    global_y >= 0 && global_y < GLOBAL_SIZE) {
+                    int flat_idx = global_y * GLOBAL_SIZE + global_x;
+                    int8_t new_val = static_cast<int8_t>(cell_value);
+
+                    // Only update & log a delta if the cell value actually changes
+                    if (global_grid_[flat_idx] != new_val) {
+                        global_grid_[flat_idx] = new_val;
+                        map_deltas_.emplace_back(flat_idx, new_val);
+                    }
                 }
             }
         }
@@ -55,17 +76,20 @@ void GlobalMapper::update_map(const HazardReport& local_report, float current_ya
 }
 
 std::string GlobalMapper::get_global_map_json() {
-    std::lock_guard<std::mutex> lock(grid_mutex_);
+    // Snapshot and clear the delta queue under the grid lock
+    std::vector<std::pair<int, int8_t>> deltas_snapshot;
+    {
+        std::lock_guard<std::mutex> lock(grid_mutex_);
+        deltas_snapshot = std::move(map_deltas_);
+        map_deltas_.clear();
+    }
 
-    // Serialize active points to keep JSON lightweight instead of a full 160k array
+    // Serialize only the changed points — O(deltas) not O(160k)
     json active_points = json::array();
-    
-    for (int i = 0; i < GLOBAL_SIZE * GLOBAL_SIZE; ++i) {
-        if (global_grid_[i] != 0) {
-            int y = i / GLOBAL_SIZE;
-            int x = i % GLOBAL_SIZE;
-            active_points.push_back({x, y, global_grid_[i]});
-        }
+    for (const auto& [flat_idx, val] : deltas_snapshot) {
+        int y = flat_idx / GLOBAL_SIZE;
+        int x = flat_idx % GLOBAL_SIZE;
+        active_points.push_back({x, y, val});
     }
 
     json pois_array = json::array();
@@ -88,7 +112,7 @@ std::string GlobalMapper::get_global_map_json() {
     output["type"] = "global_map";
     output["size"] = GLOBAL_SIZE;
     output["resolution_m"] = RESOLUTION_M;
-    output["points"] = active_points;
+    output["points"] = active_points; // Delta updates only — not the full 160k grid
     output["pois"] = pois_array;
 
     return output.dump();

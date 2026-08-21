@@ -174,6 +174,7 @@ void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper, TFLun
     LOG_INFO("Vision", "Started real-time stereo processing loop.");
     
     auto last_heartbeat = std::chrono::steady_clock::now();
+    auto last_frame_time = std::chrono::steady_clock::now(); // For dead-reckoning dt
     int frames_since_heartbeat = 0;
     
     while (true) {
@@ -192,17 +193,26 @@ void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper, TFLun
         }
         HazardReport report = mapper->process(stereo_pair->left_y, stereo_pair->right_y, lidar_dist);
 
-        // State Fusion & Downsampling
-        std::lock_guard<std::mutex> lock(g_hazard_mutex);
-        
-        // Update global map with the latest local report and heading
+        // --- Delta time for dead-reckoning integration ---
+        auto now_frame = std::chrono::steady_clock::now();
+        float delta_time_sec = std::chrono::duration<float>(now_frame - last_frame_time).count();
+        last_frame_time = now_frame;
+        // Clamp to avoid large jumps on the first frame or after stalls
+        delta_time_sec = std::min(delta_time_sec, 0.5f);
+
+        // Update global map: pass heading, active velocity command, and elapsed time
+        // so GlobalMapper can integrate dead-reckoning translation.
         float current_heading = 0.0f;
+        float current_linear_v = 0.0f;
         {
             std::lock_guard<std::mutex> state_lock(g_state_mutex);
             current_heading = g_rover_state.heading_deg;
+            current_linear_v = g_rover_state.linear_v;
         }
-        global_mapper->update_map(report, current_heading);
-        
+        global_mapper->update_map(report, current_heading, current_linear_v, delta_time_sec);
+        // State Fusion & Downsampling
+        std::lock_guard<std::mutex> lock(g_hazard_mutex);
+
         g_hazard_state.distance_m = report.closest_lethal_distance_m;
         
         if (report.closest_lethal_distance_m < 0.75f) {

@@ -59,18 +59,18 @@ void HazardMapper::load_calibration(const std::string& calib_file) {
 
 void HazardMapper::setup_stereo_matchers() {
     int minDisparity = 0;
-    int numDisparities = 64;
-    int blockSize = 5;
+    int numDisparities = 128; // Increased from 64 to handle close-range objects
+    int blockSize = 11;       // Larger block for outdoor textureless regions
 
     left_matcher_ = cv::StereoSGBM::create(
         minDisparity, numDisparities, blockSize,
-        8 * 1 * blockSize * blockSize, // P1
-        32 * 1 * blockSize * blockSize, // P2
-        1, // disp12MaxDiff
-        63, // preFilterCap
-        10, // uniquenessRatio
+        8 * 3 * blockSize * blockSize,  // P1: 3 channels
+        32 * 3 * blockSize * blockSize, // P2: 3 channels
+        1,   // disp12MaxDiff
+        63,  // preFilterCap
+        10,  // uniquenessRatio
         100, // speckleWindowSize
-        32, // speckleRange
+        32,  // speckleRange
         cv::StereoSGBM::MODE_SGBM_3WAY
     );
 
@@ -105,21 +105,17 @@ HazardReport HazardMapper::process(const cv::Mat& left_y, const cv::Mat& right_y
     HazardReport report;
     report.closest_lethal_distance_m = std::numeric_limits<float>::infinity();
 
-    // 3. 1D LiDAR Scale Anchoring
+    // 3. LiDAR Failsafe — stored as a parallel reading, NOT used to scale stereo depth.
+    // This preserves absolute stereo geometry correctness while still giving the
+    // downstream consumer (NavigationManager, UI) a single-point ground-truth distance.
+    report.lidar_depth_m = (lidar_distance_m > 0.0f) ? lidar_distance_m : -1.0f;
+
     int16_t center_d_val = filtered_disp.at<int16_t>(static_cast<int>(cy), static_cast<int>(cx));
     float center_d = center_d_val / 16.0f;
     
-    float scale_factor = 1.0f;
-    
     if (center_d > 0.0f) {
+        // Absolute stereo depth from calibrated geometry: Z = (f * B) / d
         report.center_stereo_depth_m = (focal_length_px_ * baseline_m_) / center_d;
-        
-        // Dynamic scale factor based on LiDAR ground truth
-        if (lidar_distance_m > 0.0f) {
-            scale_factor = lidar_distance_m / report.center_stereo_depth_m;
-        }
-    } else {
-        report.center_stereo_depth_m = -1.0f;
     }
 
     // Initialize raw elevation grid bounds
@@ -148,11 +144,8 @@ HazardReport HazardMapper::process(const cv::Mat& left_y, const cv::Mat& right_y
                 
                 float d = d_val / 16.0f;
                 
-                // StereoSGBM Reprojection
+                // Absolute stereo depth: Z = (f * B) / d
                 float Z = (focal_length_px_ * baseline_m_) / d;
-                
-                // Apply LiDAR scale multiplier
-                Z *= scale_factor;
                 
                 float X = (u - cx) * Z / focal_length_px_;
                 float Y = (v - cy) * Z / focal_length_px_;

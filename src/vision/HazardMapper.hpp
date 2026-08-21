@@ -24,8 +24,14 @@ struct HazardReport {
     // Distance to the closest lethal cell in the forward sector (+Y axis)
     float closest_lethal_distance_m;
     
-    // The metric depth (meters) at the exact center pixel (cx, cy) of the stereo image
-    float center_stereo_depth_m;
+    // The metric depth (meters) at the exact center pixel (cx, cy) of the stereo image,
+    // computed purely from stereo disparity: Z = (f * B) / d.
+    float center_stereo_depth_m = -1.0f;
+    
+    // The 1D LiDAR ground-truth distance (meters). Stored here as a parallel
+    // failsafe measurement; it is NOT used to scale the stereo depth map.
+    // -1.0f indicates an invalid/missing reading.
+    float lidar_depth_m = -1.0f;
 };
 
 class HazardMapper {
@@ -34,8 +40,10 @@ public:
     HazardMapper(const std::string& calib_file = "");
     ~HazardMapper();
 
-    // Computes SGBM disparity, applies WLS filter, dynamically scales using lidar_distance_m,
-    // and generates the 2.5D hazard grid.
+    // Computes SGBM disparity, applies WLS filter, and generates the 2.5D hazard grid.
+    // Depth is computed from absolute stereo geometry: Z = (f * B) / d.
+    // lidar_distance_m is stored as a parallel failsafe in HazardReport::lidar_depth_m
+    // and is NOT used to scale the stereo point cloud.
     HazardReport process(const cv::Mat& left_y, const cv::Mat& right_y, float lidar_distance_m);
 
 private:
@@ -56,9 +64,12 @@ private:
     cv::Mat K2_, D2_, R2_, P2_;
     cv::Mat Q_;
 
-    // Camera intrinsic/extrinsic assumptions
-    float baseline_m_ = 0.08f;
-    float focal_length_px_ = 600.0f;
+    // Camera intrinsic/extrinsic assumptions.
+    // These defaults match the 'synthetic identity' fallback path (f=400, B=0.06).
+    // When a real calibration file is loaded, focal_length_px_ and baseline_m_
+    // are overwritten from the projection matrix P2.
+    float baseline_m_ = 0.06f;
+    float focal_length_px_ = 400.0f;
     
     // Grid configuration
     const int grid_size_ = 100;
