@@ -211,34 +211,36 @@ void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper, TFLun
         }
         global_mapper->update_map(report, current_heading, current_linear_v, delta_time_sec);
         // State Fusion & Downsampling
-        std::lock_guard<std::mutex> lock(g_hazard_mutex);
+        {
+            std::lock_guard<std::mutex> lock(g_hazard_mutex);
 
-        g_hazard_state.distance_m = report.closest_lethal_distance_m;
-        
-        if (report.closest_lethal_distance_m < 0.75f) {
-            g_hazard_state.level = "CRITICAL";
-        } else if (report.closest_lethal_distance_m < 2.0f) {
-            g_hazard_state.level = "CAUTION";
-        } else {
-            g_hazard_state.level = "CLEAR";
-        }
+            g_hazard_state.distance_m = report.closest_lethal_distance_m;
+            
+            if (report.closest_lethal_distance_m < 0.75f) {
+                g_hazard_state.level = "CRITICAL";
+            } else if (report.closest_lethal_distance_m < 2.0f) {
+                g_hazard_state.level = "CAUTION";
+            } else {
+                g_hazard_state.level = "CLEAR";
+            }
 
-        // Downsample the 100x100 5cm grid into a lightweight 10x10 50cm grid for UI streaming
-        g_hazard_state.mini_map.clear();
-        g_hazard_state.mini_map.reserve(100);
-        
-        for (int r = 0; r < 100; r += 10) {
-            for (int c = 0; c < 100; c += 10) {
-                int lethal_count = 0;
-                for (int ir = 0; ir < 10; ++ir) {
-                    for (int ic = 0; ic < 10; ++ic) {
-                        if (report.costmap[r + ir][c + ic] > 0) {
-                            lethal_count++;
+            // Downsample the 100x100 5cm grid into a lightweight 10x10 50cm grid for UI streaming
+            g_hazard_state.mini_map.clear();
+            g_hazard_state.mini_map.reserve(100);
+            
+            for (int r = 0; r < 100; r += 10) {
+                for (int c = 0; c < 100; c += 10) {
+                    int lethal_count = 0;
+                    for (int ir = 0; ir < 10; ++ir) {
+                        for (int ic = 0; ic < 10; ++ic) {
+                            if (report.costmap[r + ir][c + ic] > 0) {
+                                lethal_count++;
+                            }
                         }
                     }
+                    // Mark macro-cell as lethal if any inner cells were lethal
+                    g_hazard_state.mini_map.push_back(lethal_count > 0 ? 255 : 0);
                 }
-                // Mark macro-cell as lethal if any inner cells were lethal
-                g_hazard_state.mini_map.push_back(lethal_count > 0 ? 255 : 0);
             }
         }
         
@@ -352,6 +354,8 @@ void broadcast_thread_loop(GlobalMapper* global_mapper) {
                 session_ptr->send_message(payload);
             }
         }
+
+        LOG_INFO("Broadcast", "Pushed telemetry frame to clients.");
 
         // Maintain ~15 Hz
         std::this_thread::sleep_for(std::chrono::milliseconds(66));

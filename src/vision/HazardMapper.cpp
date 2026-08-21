@@ -59,8 +59,8 @@ void HazardMapper::load_calibration(const std::string& calib_file) {
 
 void HazardMapper::setup_stereo_matchers() {
     int minDisparity = 0;
-    int numDisparities = 128; // Increased from 64 to handle close-range objects
-    int blockSize = 11;       // Larger block for outdoor textureless regions
+    int numDisparities = 64; // Decreased from 128 to 64 to reduce CPU load
+    int blockSize = 7;       // Smaller block size
 
     left_matcher_ = cv::StereoSGBM::create(
         minDisparity, numDisparities, blockSize,
