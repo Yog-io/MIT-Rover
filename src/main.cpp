@@ -368,12 +368,16 @@ int main() {
 
     // 1. Hardware Initialization
     if (!lidar->initialize("/dev/i2c-3", 0x10)) {
-        LOG_WARN("Hardware", "Failed to initialize TF-Luna LiDAR.");
+        LOG_ERROR("Hardware", "Failed to initialize TF-Luna LiDAR.");
+    } else {
+        LOG_INFO("Hardware", "TF-Luna LiDAR initialized successfully.");
     }
     lidar->start();
 
     if (!imu->initialize("/dev/i2c-1", 0x68)) {
-        LOG_WARN("Hardware", "Failed to initialize MPU6050 IMU.");
+        LOG_ERROR("Hardware", "Failed to initialize MPU6050 IMU.");
+    } else {
+        LOG_INFO("Hardware", "MPU6050 IMU initialized successfully.");
     }
     imu->start();
 
@@ -383,12 +387,15 @@ int main() {
     }
     
     if (!motor_ctrl->initialize()) {
-        LOG_WARN("Hardware", "Failed to initialize motor controller.");
+        LOG_ERROR("Hardware", "Failed to initialize motor controller.");
+    } else {
+        LOG_INFO("Hardware", "Motor controller initialized successfully.");
     }
 
     LOG_INFO("Hardware", "Cameras initialized successfully. Starting hardware streams...");
     dual_cam->start();
     udp_server->start();
+    LOG_INFO("Hardware", "UDPServer initialized and started successfully.");
 
     // 2. Spawn core threads
     std::thread vision_thread(vision_thread_loop, dual_cam.get(), mapper.get(), lidar.get(), global_mapper.get(), nav_manager.get());
