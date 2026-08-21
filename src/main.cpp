@@ -270,8 +270,6 @@ void broadcast_thread_loop(GlobalMapper* global_mapper) {
     LOG_INFO("Broadcast", "Started 15 Hz telemetry loop.");
     
     auto last_time = std::chrono::steady_clock::now();
-    
-    auto last_time = std::chrono::steady_clock::now();
 
     while (true) {
         auto now = std::chrono::steady_clock::now();
