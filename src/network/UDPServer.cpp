@@ -1,5 +1,5 @@
 #include "network/UDPServer.hpp"
-#include <iostream>
+#include "utils/Logger.hpp"
 #include <nlohmann/json.hpp>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -34,7 +34,7 @@ void UDPServer::start() {
 
     socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd_ < 0) {
-        std::cerr << "[UDPServer] Failed to create socket." << std::endl;
+        LOG_ERROR("UDPServer", "Failed to create socket.");
         return;
     }
 
@@ -47,7 +47,7 @@ void UDPServer::start() {
     server_addr.sin_port = htons(port_);
 
     if (bind(socket_fd_, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        std::cerr << "[UDPServer] Failed to bind to port " << port_ << std::endl;
+        LOG_ERROR("UDPServer", "Failed to bind to port " + std::to_string(port_));
         close(socket_fd_);
         socket_fd_ = -1;
         return;
@@ -60,7 +60,7 @@ void UDPServer::start() {
 
     running_ = true;
     listener_thread_ = std::thread(&UDPServer::listener_loop, this);
-    std::cout << "[UDPServer] Started listening on UDP port " << port_ << std::endl;
+    LOG_INFO("UDPServer", "Started listening on UDP port " + std::to_string(port_));
 }
 
 void UDPServer::stop() {
@@ -75,7 +75,7 @@ void UDPServer::stop() {
     if (listener_thread_.joinable()) {
         listener_thread_.join();
     }
-    std::cout << "[UDPServer] Stopped." << std::endl;
+    LOG_INFO("UDPServer", "Stopped.");
 }
 
 void UDPServer::listener_loop() {
@@ -135,13 +135,13 @@ void UDPServer::listener_loop() {
 
                             if (global_mapper_) {
                                 global_mapper_->add_poi(poi);
-                                std::cout << "[UDPServer] Scientific POI Pinned at (" << poi.x << ", " << poi.y << ")!" << std::endl;
+                                LOG_INFO("UDPServer", "Scientific POI Pinned at (" + std::to_string(poi.x) + ", " + std::to_string(poi.y) + ")!");
                             }
                         }
                     }
                 }
             } catch (const std::exception& e) {
-                // Ignore parsing errors for robust background listening
+                LOG_ERROR("UDPServer", std::string("JSON parse error: ") + e.what());
             }
         }
     }

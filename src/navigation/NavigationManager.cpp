@@ -1,5 +1,5 @@
 #include "navigation/NavigationManager.hpp"
-#include <iostream>
+#include "utils/Logger.hpp"
 
 NavigationManager::NavigationManager(MotorController* motor_ctrl, RoverState* rover_state, HazardState* hazard_state, std::mutex* state_mutex, std::mutex* hazard_mutex)
     : motor_ctrl_(motor_ctrl), rover_state_(rover_state), hazard_state_(hazard_state), state_mutex_(state_mutex), hazard_mutex_(hazard_mutex) {}
@@ -25,7 +25,7 @@ void NavigationManager::tick(const HazardReport& report) {
     if (mode_str == "MANUAL") {
         // Hazard Arbitration (Manual Mode)
         if (report.closest_lethal_distance_m < 0.5f && cmd_linear_v > 0.0f) {
-            std::cout << "[NavManager] HAZARD OVERRIDE: Suppressing forward drive!" << std::endl;
+            LOG_WARN("NavManager", "HAZARD OVERRIDE: Suppressing forward drive!");
             cmd_linear_v = 0.0f; // Override forward drive, but allow turning/reversing
             
             std::lock_guard<std::mutex> lock(*hazard_mutex_);

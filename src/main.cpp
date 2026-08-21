@@ -1,4 +1,4 @@
-#include <iostream>
+#include "utils/Logger.hpp"
 #include <string>
 #include <thread>
 #include <mutex>
@@ -79,7 +79,7 @@ private:
             std::lock_guard<std::mutex> lock(g_connections_mutex);
             g_connections.insert(shared_from_this());
         }
-        std::cout << "[WebSocket] Client connected." << std::endl;
+        LOG_INFO("WebSocket", "Client connected.");
         do_read();
     }
 
@@ -112,10 +112,10 @@ private:
             } else if (command == "deploy_arm") {
                 g_rover_state.arm_deployed = true;
             } else {
-                std::cerr << "Unknown command received: " << command << std::endl;
+                LOG_WARN("WebSocket", "Unknown command received: " + command);
             }
         } catch (const std::exception& e) {
-            std::cerr << "Error parsing incoming JSON: " << e.what() << std::endl;
+            LOG_ERROR("WebSocket", std::string("Error parsing incoming JSON: ") + e.what());
         }
         do_read();
     }
@@ -151,7 +151,7 @@ private:
         std::lock_guard<std::mutex> lock(g_connections_mutex);
         if (g_connections.find(shared_from_this()) != g_connections.end()) {
             g_connections.erase(shared_from_this());
-            std::cout << "[WebSocket] Client disconnected." << std::endl;
+            LOG_INFO("WebSocket", "Client disconnected.");
         }
     }
 };
@@ -171,14 +171,17 @@ void do_accept(tcp::acceptor& acceptor, net::io_context& ioc) {
 // Phase 4: Vision & Hardware Processing Thread (Replaces old mock thread)
 // ----------------------------------------------------------------------------
 void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper, TFLunaSensor* lidar, GlobalMapper* global_mapper, NavigationManager* nav_manager) {
-    std::cout << "[Vision Thread] Started real-time stereo processing loop." << std::endl;
+    LOG_INFO("Vision", "Started real-time stereo processing loop.");
+    
+    auto last_heartbeat = std::chrono::steady_clock::now();
+    int frames_since_heartbeat = 0;
     
     while (true) {
         // Blocks until a valid timestamp-paired frame arrives from the hardware
         auto stereo_pair = dual_cam->get_stereo_pair();
         
         if (!stereo_pair) {
-            std::cerr << "[Vision Thread] Camera capture returned null. Exiting loop." << std::endl;
+            LOG_ERROR("Vision", "Camera capture returned null. Exiting loop.");
             break;
         }
 
@@ -232,6 +235,15 @@ void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper, TFLun
         // Navigation arbitration (tick runs every frame to process avoidance/overrides)
         nav_manager->tick(report);
         
+        frames_since_heartbeat++;
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_heartbeat).count() > 5000) {
+            float fps = frames_since_heartbeat / 5.0f;
+            LOG_INFO("SYS", "Vision_FPS: " + std::to_string(fps));
+            frames_since_heartbeat = 0;
+            last_heartbeat = now;
+        }
+        
         // As loop iterates, stereo_pair goes out of scope and memory is re-queued to ISP!
     }
 }
@@ -240,7 +252,7 @@ void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper, TFLun
 // Phase 4: IMU Polling Thread (50 Hz)
 // ----------------------------------------------------------------------------
 void imu_thread_loop(MPU6050Sensor* imu) {
-    std::cout << "[IMU Thread] Started 50 Hz state update loop." << std::endl;
+    LOG_INFO("IMU", "Started 50 Hz state update loop.");
     while (true) {
         IMUData data = imu->get_orientation();
         {
@@ -255,7 +267,7 @@ void imu_thread_loop(MPU6050Sensor* imu) {
 // Phase 4: Lightweight Broadcasting Loop (15 Hz)
 // ----------------------------------------------------------------------------
 void broadcast_thread_loop(GlobalMapper* global_mapper) {
-    std::cout << "[Broadcast Thread] Started 15 Hz telemetry loop." << std::endl;
+    LOG_INFO("Broadcast", "Started 15 Hz telemetry loop.");
     
     auto last_time = std::chrono::steady_clock::now();
     
@@ -328,8 +340,6 @@ void broadcast_thread_loop(GlobalMapper* global_mapper) {
             std::lock_guard<std::mutex> lock(g_connections_mutex);
             std::vector<std::shared_ptr<session>> active_connections(g_connections.begin(), g_connections.end());
             
-            std::cout << "[Broadcast] Pushing telemetry to " << active_connections.size() << " clients...\n";
-            
             for (auto& session_ptr : active_connections) {
                 session_ptr->send_message(payload);
             }
@@ -341,9 +351,9 @@ void broadcast_thread_loop(GlobalMapper* global_mapper) {
 }
 
 int main() {
-    std::cout << "=========================================================" << std::endl;
-    std::cout << "[Backend] Phase 4: Unified Rover Backend Integration" << std::endl;
-    std::cout << "=========================================================" << std::endl;
+    LOG_INFO("SYS", "=========================================================");
+    LOG_INFO("SYS", "[Backend] Phase 4: Unified Rover Backend Integration");
+    LOG_INFO("SYS", "=========================================================");
     
     std::unique_ptr<DualCameraCapture> dual_cam = std::make_unique<DualCameraCapture>();
     std::unique_ptr<HazardMapper> mapper = std::make_unique<HazardMapper>();
@@ -358,25 +368,25 @@ int main() {
 
     // 1. Hardware Initialization
     if (!lidar->initialize("/dev/i2c-3", 0x10)) {
-        std::cerr << "[Warning] Failed to initialize TF-Luna LiDAR." << std::endl;
+        LOG_WARN("Hardware", "Failed to initialize TF-Luna LiDAR.");
     }
     lidar->start();
 
     if (!imu->initialize("/dev/i2c-1", 0x68)) {
-        std::cerr << "[Warning] Failed to initialize MPU6050 IMU." << std::endl;
+        LOG_WARN("Hardware", "Failed to initialize MPU6050 IMU.");
     }
     imu->start();
 
     if (!dual_cam->initialize()) {
-        std::cerr << "[Fatal Error] Failed to initialize hardware cameras via libcamera." << std::endl;
+        LOG_ERROR("Hardware", "Failed to initialize hardware cameras via libcamera.");
         return -1;
     }
     
     if (!motor_ctrl->initialize()) {
-        std::cerr << "[Warning] Failed to initialize motor controller." << std::endl;
+        LOG_WARN("Hardware", "Failed to initialize motor controller.");
     }
 
-    std::cout << "[Backend] Cameras initialized successfully. Starting hardware streams..." << std::endl;
+    LOG_INFO("Hardware", "Cameras initialized successfully. Starting hardware streams...");
     dual_cam->start();
     udp_server->start();
 
@@ -389,14 +399,14 @@ int main() {
     net::io_context ioc{1};
     tcp::acceptor acceptor(ioc, {tcp::v4(), 8080});
 
-    std::cout << "[Backend] Starting WebSocket Server on port 8080..." << std::endl;
+    LOG_INFO("Network", "Starting WebSocket Server on port 8080...");
     do_accept(acceptor, ioc);
     
     // Block the main thread on networking io_context
     ioc.run();
 
     // Cleanup
-    std::cout << "[Backend] Shutting down..." << std::endl;
+    LOG_INFO("SYS", "Shutting down...");
     udp_server->stop();
     motor_ctrl->stop();
     dual_cam->stop();

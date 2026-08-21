@@ -1,6 +1,6 @@
 #include "vision/HazardMapper.hpp"
+#include "utils/Logger.hpp"
 #include <omp.h>
-#include <iostream>
 #include <cmath>
 
 HazardMapper::HazardMapper(const std::string& calib_file) {
@@ -23,7 +23,7 @@ void HazardMapper::load_calibration(const std::string& calib_file) {
             fs["Q"] >> Q_;
             fs.release();
             loaded = true;
-            std::cout << "[HazardMapper] Loaded stereo calibration from " << calib_file << std::endl;
+            LOG_INFO("HazardMapper", "Loaded stereo calibration from " + calib_file);
             
             // Extract baseline and focal length from P2
             if (!P2_.empty()) {
@@ -31,12 +31,12 @@ void HazardMapper::load_calibration(const std::string& calib_file) {
                 baseline_m_ = std::abs(P2_.at<double>(0, 3) / focal_length_px_);
             }
         } else {
-            std::cerr << "[HazardMapper] WARNING: Failed to open calibration file: " << calib_file << std::endl;
+            LOG_ERROR("HazardMapper", "Failed to open calibration file: " + calib_file);
         }
     }
     
     if (!loaded) {
-        std::cerr << "[HazardMapper] WARNING: Using synthetic identity calibration matrices!" << std::endl;
+        LOG_WARN("HazardMapper", "Using synthetic identity calibration matrices!");
         // Provide synthetic/dummy identity matrices to prevent crashes
         K1_ = cv::Mat::eye(3, 3, CV_64F); K1_.at<double>(0,0) = focal_length_px_; K1_.at<double>(1,1) = focal_length_px_;
         K1_.at<double>(0,2) = 320.0; K1_.at<double>(1,2) = 240.0;

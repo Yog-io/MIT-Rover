@@ -1,5 +1,5 @@
 #include "actuation/MotorController.hpp"
-#include <iostream>
+#include "utils/Logger.hpp"
 #include <cmath>
 #include <algorithm>
 #include <chrono>
@@ -34,7 +34,7 @@ uint64_t MotorController::get_current_time_ms() {
 bool MotorController::initialize() {
     std::lock_guard<std::mutex> lock(hardware_mutex_);
 #ifdef __APPLE__
-    std::cout << "[MotorController] Mock hardware initialized (macOS fallback)." << std::endl;
+    LOG_INFO("MotorController", "Mock hardware initialized (macOS fallback).");
     running_ = true;
     last_cmd_time_ms_ = get_current_time_ms();
     watchdog_thread_ = std::thread(&MotorController::watchdog_loop, this);
@@ -42,7 +42,7 @@ bool MotorController::initialize() {
 #else
     gpio_handle_ = lgGpiochipOpen(0);
     if (gpio_handle_ < 0) {
-        std::cerr << "[MotorController] Failed to open GPIO chip." << std::endl;
+        LOG_ERROR("MotorController", "Failed to open GPIO chip.");
         return false;
     }
 
@@ -51,7 +51,7 @@ bool MotorController::initialize() {
     lgGpioClaimOutput(gpio_handle_, 0, RIGHT_DIR_PIN, 0);
     lgGpioClaimOutput(gpio_handle_, 0, RIGHT_PWM_PIN, 0);
     
-    std::cout << "[MotorController] GPIO initialized successfully." << std::endl;
+    LOG_INFO("MotorController", "GPIO initialized successfully.");
     running_ = true;
     last_cmd_time_ms_ = get_current_time_ms();
     watchdog_thread_ = std::thread(&MotorController::watchdog_loop, this);
@@ -99,6 +99,7 @@ void MotorController::set_motor_pwms(float left_pwm, float right_pwm) {
 }
 
 void MotorController::watchdog_loop() {
+    uint64_t last_heartbeat = get_current_time_ms();
     while (running_) {
         uint64_t now = get_current_time_ms();
         uint64_t last = last_cmd_time_ms_.load();
@@ -106,6 +107,11 @@ void MotorController::watchdog_loop() {
         if (now - last > 500) {
             // Safety watchdog: stop motors if no velocity command received in 500ms
             stop();
+        }
+        
+        if (now - last_heartbeat > 5000) {
+            LOG_INFO("SYS", "Motor_Watchdog: ACTIVE");
+            last_heartbeat = now;
         }
         
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
