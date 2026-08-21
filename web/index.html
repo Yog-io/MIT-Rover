@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rover Telemetry Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header class="top-bar">
+        <div class="logo">Rover <span>Brain</span></div>
+        <div class="connection-controls">
+            <input type="text" id="ws-url" placeholder="ws://localhost:8080">
+            <button id="connect-btn" class="btn primary">Connect</button>
+            <span id="connection-status" class="status-indicator disconnected">Disconnected</span>
+        </div>
+    </header>
+
+    <main class="dashboard-container">
+        <!-- Left Panel: Telemetry HUD -->
+        <aside class="panel left-panel">
+            <h2>Telemetry HUD</h2>
+            <div class="telemetry-grid">
+                <div class="data-card">
+                    <span class="label">IMU Yaw</span>
+                    <span class="value" id="val-yaw">--°</span>
+                </div>
+                <div class="data-card">
+                    <span class="label">LiDAR Depth</span>
+                    <span class="value" id="val-lidar">-- m</span>
+                </div>
+                <div class="data-card">
+                    <span class="label">Temperature</span>
+                    <span class="value" id="val-temp">-- °C</span>
+                </div>
+                <div class="data-card">
+                    <span class="label">Humidity</span>
+                    <span class="value" id="val-humidity">-- %</span>
+                </div>
+                <div class="data-card">
+                    <span class="label">Soil Moisture</span>
+                    <span class="value" id="val-moisture">-- %</span>
+                </div>
+                <div class="data-card">
+                    <span class="label">Pressure</span>
+                    <span class="value" id="val-pressure">-- hPa</span>
+                </div>
+                <div class="data-card">
+                    <span class="label">Vision FPS</span>
+                    <span class="value" id="val-fps">--</span>
+                </div>
+                <div class="data-card mode-card">
+                    <span class="label">Current Mode</span>
+                    <span class="value" id="val-mode">MANUAL</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Center: Map Canvas -->
+        <section class="panel center-panel">
+            <h2>Global Map (20x20m)</h2>
+            <div class="canvas-container">
+                <canvas id="map-canvas" width="800" height="800"></canvas>
+            </div>
+        </section>
+
+        <!-- Right Panel: Controls -->
+        <aside class="panel right-panel">
+            <h2>Controls</h2>
+            
+            <div class="control-section">
+                <h3>Hazard Status</h3>
+                <div id="hazard-indicator" class="hazard-indicator green">ALL CLEAR</div>
+            </div>
+
+            <div class="control-section">
+                <h3>Operation Mode</h3>
+                <button id="toggle-mode-btn" class="btn mode-toggle">Switch to AUTONOMOUS</button>
+            </div>
+
+            <div class="control-section teleop-container">
+                <h3>Teleop (WASD)</h3>
+                <div class="d-pad">
+                    <button class="d-btn" id="btn-w">W</button>
+                    <div class="d-pad-row">
+                        <button class="d-btn" id="btn-a">A</button>
+                        <button class="d-btn" id="btn-s">S</button>
+                        <button class="d-btn" id="btn-d">D</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="control-section mt-auto">
+                <button id="estop-btn" class="btn danger full-width">EMERGENCY STOP</button>
+            </div>
+        </aside>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>
