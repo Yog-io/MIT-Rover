@@ -84,6 +84,7 @@ void HazardMapper::setup_stereo_matchers() {
 HazardReport HazardMapper::process(const cv::Mat& left_y, const cv::Mat& right_y, float lidar_distance_m) {
     cv::Mat left_rect, right_rect;
     
+    LOG_INFO("HazardTrace", "3. Starting stereo rectification (remap)...");
     // 1. Mandatory Epipolar Rectification
     cv::remap(left_y, left_rect, map1x_, map1y_, cv::INTER_LINEAR);
     cv::remap(right_y, right_rect, map2x_, map2y_, cv::INTER_LINEAR);
@@ -91,6 +92,7 @@ HazardReport HazardMapper::process(const cv::Mat& left_y, const cv::Mat& right_y
     // 2. StereoSGBM + WLS Filtering
     cv::Mat left_disp, right_disp, filtered_disp;
     
+    LOG_INFO("HazardTrace", "4. Starting SGBM compute...");
     left_matcher_->compute(left_rect, right_rect, left_disp);
     right_matcher_->compute(right_rect, left_rect, right_disp);
     

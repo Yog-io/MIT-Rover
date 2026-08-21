@@ -178,6 +178,7 @@ void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper, TFLun
     int frames_since_heartbeat = 0;
     
     while (true) {
+        LOG_INFO("VisionTrace", "1. Requesting frames from DualCameraCapture...");
         // Blocks until a valid timestamp-paired frame arrives from the hardware
         auto stereo_pair = dual_cam->get_stereo_pair();
         
@@ -186,12 +187,15 @@ void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper, TFLun
             break;
         }
 
+        LOG_INFO("VisionTrace", "2. Frames received. Passing to HazardMapper...");
+
         // Process stereo frame through OpenMP HazardMapper Pipeline
         float lidar_dist = lidar->get_distance_meters();
         if (lidar_dist < 0.0f) {
             lidar_dist = 1.0f; // Default if invalid
         }
         HazardReport report = mapper->process(stereo_pair->left_y, stereo_pair->right_y, lidar_dist);
+        LOG_INFO("VisionTrace", "5. HazardMapper complete. Fusing state...");
 
         // --- Delta time for dead-reckoning integration ---
         auto now_frame = std::chrono::steady_clock::now();
