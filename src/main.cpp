@@ -200,16 +200,6 @@ void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper, TFLun
         // Clamp to avoid large jumps on the first frame or after stalls
         delta_time_sec = std::min(delta_time_sec, 0.5f);
 
-        // Update global map: pass heading, active velocity command, and elapsed time
-        // so GlobalMapper can integrate dead-reckoning translation.
-        float current_heading = 0.0f;
-        float current_linear_v = 0.0f;
-        {
-            std::lock_guard<std::mutex> state_lock(g_state_mutex);
-            current_heading = g_rover_state.heading_deg;
-            current_linear_v = g_rover_state.linear_v;
-        }
-        global_mapper->update_map(report, current_heading, current_linear_v, delta_time_sec);
         // State Fusion & Downsampling
         {
             std::lock_guard<std::mutex> lock(g_hazard_mutex);
@@ -243,6 +233,17 @@ void vision_thread_loop(DualCameraCapture* dual_cam, HazardMapper* mapper, TFLun
                 }
             }
         }
+
+        // Update global map: pass heading, active velocity command, and elapsed time
+        // so GlobalMapper can integrate dead-reckoning translation.
+        float current_heading = 0.0f;
+        float current_linear_v = 0.0f;
+        {
+            std::lock_guard<std::mutex> state_lock(g_state_mutex);
+            current_heading = g_rover_state.heading_deg;
+            current_linear_v = g_rover_state.linear_v;
+        }
+        global_mapper->update_map(report, current_heading, current_linear_v, delta_time_sec);
         
         // Navigation arbitration (tick runs every frame to process avoidance/overrides)
         nav_manager->tick(report);

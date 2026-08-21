@@ -64,8 +64,8 @@ void HazardMapper::setup_stereo_matchers() {
 
     left_matcher_ = cv::StereoSGBM::create(
         minDisparity, numDisparities, blockSize,
-        8 * 3 * blockSize * blockSize,  // P1: 3 channels
-        32 * 3 * blockSize * blockSize, // P2: 3 channels
+        8 * 3 * 7 * 7,  // P1: 3 channels (Hardcoded)
+        32 * 3 * 7 * 7, // P2: 3 channels (Hardcoded)
         1,   // disp12MaxDiff
         63,  // preFilterCap
         10,  // uniquenessRatio
@@ -94,6 +94,8 @@ HazardReport HazardMapper::process(const cv::Mat& left_y, const cv::Mat& right_y
     left_matcher_->compute(left_rect, right_rect, left_disp);
     right_matcher_->compute(right_rect, left_rect, right_disp);
     
+    LOG_INFO("Vision", "SGBM compute complete for frame.");
+
     wls_filter_->filter(left_disp, left_rect, filtered_disp, right_disp);
 
     // Filtered disparity is 16-bit signed, with a scale factor of 16
